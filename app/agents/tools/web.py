@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import html
 import re
+import sys
 
 import httpx
 from bs4 import BeautifulSoup
@@ -57,7 +58,8 @@ def fetch_directory_html(base_url: str, timeout: float = 10.0) -> str | None:
         )
         resp.raise_for_status()
         return resp.text
-    except Exception:
+    except Exception as exc:
+        print(f"[web] fetch_directory_html failed for {base_url}: {type(exc).__name__}: {exc}", file=sys.stderr)
         return None
 
 
@@ -144,6 +146,10 @@ def get_store_directory(base_url: str, floor: int | None = None) -> list[dict]:
                     break
 
     if not stores:
+        print(
+            f"[web] both static and Playwright-rendered fetches failed for {base_url} "
+            f"-- falling back to SAMPLE_DIRECTORY", file=sys.stderr,
+        )
         stores = SAMPLE_DIRECTORY
 
     if floor is not None:
