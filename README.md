@@ -124,7 +124,7 @@ app/
   api/routes.py          POST /run, GET /status/{job_id}, GET /geojson/{floor}, GET /feature/{feature_id},
                           GET /review-queue, GET /audit/{feature_id}, POST /rerun/{feature_id}
   agents/
-    base.py               shared Claude API wrapper (not currently called by any agent — see Known Limitations)
+    base.py               shared Claude/OpenAI LLM wrapper (not currently called by any agent — see Known Limitations)
     task_intake.py         Agent 1
     research.py             Agent 2
     validation.py            Agent 3
@@ -140,7 +140,7 @@ app/
                           ground_truth.py
   main.py                 FastAPI entrypoint
 db/schema.sql             Postgres migration for a real Supabase project
-tests/                    50 tests: unit (validation agent, rule engine), integration
+tests/                    60 tests: unit (validation agent, rule engine), integration
                           (publication review), end-to-end (full orchestrator + eval)
 requirements.txt          production dependencies
 requirements-dev.txt      + pytest
@@ -179,7 +179,7 @@ curl "localhost:8000/geojson/2?mall=Mall%20of%20America"
 python -m pytest tests/ -v
 ```
 
-50 tests, ~20-30s, no network or credentials required — `tests/test_accuracy_eval.py`
+60 tests, ~20-30s, no network or credentials required — `tests/test_accuracy_eval.py`
 explicitly forces the directory scraper offline (`force_offline_scraping` fixture)
 so the suite stays deterministic even when live network access happens to be
 available in the environment running it.
@@ -189,23 +189,31 @@ available in the environment running it.
 | Variable | Purpose | If unset |
 |---|---|---|
 | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Postgres + Storage backend | Falls back to local SQLite + local files |
-| `ANTHROPIC_API_KEY` | Claude-backed reasoning (`agents/base.py`) | Not currently exercised by any agent — see Known Limitations |
+| `ANTHROPIC_API_KEY` | Claude-backed reasoning (`agents/base.py`, preferred provider) | Not currently exercised by any agent — see Known Limitations |
+| `OPENAI_API_KEY` | OpenAI-backed reasoning (`agents/base.py`, fallback provider) | Not currently exercised by any agent — see Known Limitations |
 | `YOUTUBE_API_KEY` | Real YouTube Data API search + transcripts | Falls back to a bundled 4-store sample transcript set |
 | `INSTAGRAM_GRAPH_API_TOKEN` | Real Instagram Graph API lookups | `social.py` returns no results regardless (permanent stub) |
 | `MALL_BASE_URL` | Target mall site | Defaults to `https://www.mallofamerica.com` |
 | `MALL_MAPPER_MODEL` | Claude model override | Defaults to `claude-sonnet-5` |
+| `MALL_MAPPER_OPENAI_MODEL` | OpenAI model override | Defaults to `gpt-4o-mini` |
 
 ## Deployment
 
-1. **Supabase**: create a project at supabase.com, run `db/schema.sql` in the SQL
-   Editor, grab the project URL and `service_role` key (Project Settings → API).
-2. **Docker**: `docker build -t mall-mapper .` — installs `tesseract-ocr` and
+1. **GitHub**: the repo is pushed to https://github.com/sg19chess-spec/mall-mapper.
+2. **Supabase**: create a project at supabase.com, run `db/schema.sql` against it
+   (all 8 tables, confirmed created), grab the project URL and `service_role`
+   key (Project Settings → API).
+3. **Docker**: `docker build -t mall-mapper .` — installs `tesseract-ocr` and
    Playwright's Chromium alongside the app (this is why Docker is required for
    deployment rather than Render's native Python runtime, which can't install
-   those system-level binaries).
-3. **Render**: connect the repo, it picks up `render.yaml` (`env: docker`), set
-   the four secret env vars (`SUPABASE_URL`, `SUPABASE_ANON_KEY`,
-   `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`) in the dashboard.
+   those system-level binaries). Verified: builds successfully, and a
+   container from it runs a full pipeline job end-to-end, including live
+   scraping from inside the container.
+4. **Render**: **New → Blueprint**, connect the GitHub repo — it picks up
+   `render.yaml` (`env: docker`) automatically. Set the secret env vars
+   (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
+   `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY`) in the dashboard's
+   Environment tab, then deploy.
 
 ## Real-world verification performed
 
@@ -227,11 +235,14 @@ available in the environment running it.
 
 ## Known limitations
 
-- **`ANTHROPIC_API_KEY` is never actually exercised.** `agents/base.py` provides
-  `ask_claude`/`ask_claude_json`, but no agent currently calls them — all
-  extraction so far is deterministic (BeautifulSoup selectors, regex). This was a
-  deliberate scope decision (see below), not an oversight, but it means the
-  Claude integration is unverified.
+- **Neither `ANTHROPIC_API_KEY` nor `OPENAI_API_KEY` is currently exercised by
+  any agent.** `agents/base.py` provides a working, tested (fully mocked, no
+  real API calls) provider-agnostic interface — `ask_claude`/`ask_openai`/
+  `ask_llm` (picks whichever provider is configured, Anthropic preferred) and
+  their `_json` variants — but no agent currently calls them; all extraction
+  so far is deterministic (BeautifulSoup selectors, regex). This was a
+  deliberate scope decision (see below), not an oversight: the capability is
+  real and unit-tested, just not wired into a live agent call path yet.
 - **Social evidence (`social.py`) is a permanent stub** — returns no results
   regardless of whether `INSTAGRAM_GRAPH_API_TOKEN` is set. Never wired to a real
   API.
@@ -291,7 +302,7 @@ the image.
 
 | Claim | Status |
 |---|---|
-| 5-agent pipeline logic is correct | ✅ 50 passing tests |
+| 5-agent pipeline logic is correct | ✅ 60 passing tests |
 | Confidence/conflict/spatial-reasoning math is correct | ✅ Unit-tested directly against `ValidationAgent` |
 | Geometry rule checks correctly gate publication | ✅ Unit + integration tested; one real bug found and fixed (`floor_boundary` self-inclusion) |
 | Live scraping works against a real, JS-rendered mall site | ✅ Manually verified, 46+ real stores (locally and inside the Docker container) |
