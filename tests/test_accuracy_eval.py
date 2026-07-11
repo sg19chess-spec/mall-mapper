@@ -65,6 +65,31 @@ def test_full_mall_publishes_all_sample_stores_with_perfect_directory_agreement(
     assert report["human_review_queue_size"] == 0
 
 
+def test_ground_truth_deduped_across_repeated_runs_on_same_store(tmp_path, monkeypatch):
+    """Regression test for a bug found live on Render: evidence persists
+    across separate /run calls against the same (mall, floor) in
+    production (unlike each test's throwaway SQLite DB), and Research
+    always does a fresh broad scrape rather than skipping an
+    already-scraped floor. Running the same floor twice inserted a second
+    full set of official_directory evidence for every store, and
+    ground_truth_count (and therefore precision, which can mathematically
+    never exceed 1.0) was counting each duplicate row as a separate "true"
+    store -- observed live as precision: 2.0."""
+    store = fresh_store(tmp_path, monkeypatch)
+    orch = Orchestrator(store, "https://www.mallofamerica.com")
+    config = RunConfig(mall="Mall of America", floors=[1], max_iterations=4)
+
+    orch.run("pytest-repeat-run-1", config)
+    report = orch.run("pytest-repeat-run-2", config)
+    acc = report["accuracy"]
+
+    # 4 distinct sample stores on floor 1, regardless of how many times
+    # the floor has been (re-)scraped into the evidence table
+    assert acc["ground_truth_count"] == 4
+    assert acc["directory_agreement"]["precision"] <= 1.0
+    assert acc["directory_agreement"]["recall"] <= 1.0
+
+
 def test_pipeline_converges_without_hitting_iteration_cap(tmp_path, monkeypatch):
     store = fresh_store(tmp_path, monkeypatch)
     orch = Orchestrator(store, "https://www.mallofamerica.com")
