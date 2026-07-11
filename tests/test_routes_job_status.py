@@ -147,8 +147,30 @@ def test_job_trail_endpoint_returns_full_agent_activity(tmp_path, monkeypatch):
     events = {row["event"] for row in trail}
     assert "job_started" in events
     assert "evidence_collected" in events
+    assert "validation_summary" in events
+    assert "mapping_summary" in events
     assert "review_decision" in events
     assert "job_completed" in events
+
+    # every event except job_completed is tagged with which of the 5 agents
+    # produced it, so a UI can show "which agent is active right now" from
+    # the latest event alone. job_completed is deliberately untagged -- it's
+    # not itself a Task Intake action, and tagging it would make the UI's
+    # "most recent agent" signal jump backward to stage 1 at the very end
+    # instead of staying on whichever agent did the last real work.
+    for row in trail:
+        if row["event"] == "job_completed":
+            assert "agent" not in row["detail"]
+        else:
+            assert row["detail"].get("agent"), row
+
+    evidence_rows = [row for row in trail if row["event"] == "evidence_collected"]
+    # full evidence detail is present, not just a category label -- this is
+    # what lets the UI show exactly what was found (the actual observation
+    # values, source URL, certainty), not just "evidence_collected: Nike"
+    assert all("observation" in row["detail"] for row in evidence_rows)
+    assert all("source_url" in row["detail"] for row in evidence_rows)
+    assert all("certainty" in row["detail"] for row in evidence_rows)
 
 
 def test_concurrent_run_rejected_with_409(tmp_path, monkeypatch):

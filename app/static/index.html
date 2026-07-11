@@ -51,6 +51,48 @@
   .badge.failed { background: #3b1616; color: var(--red); }
   .status-bar .dim { color: var(--text-dim); }
 
+  .pipeline {
+    display: flex; align-items: center; gap: 6px; padding: 14px 28px;
+    border-bottom: 1px solid var(--border); overflow-x: auto;
+  }
+  .stage {
+    display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 20px;
+    background: var(--panel-2); border: 1px solid var(--border); white-space: nowrap;
+    transition: border-color .3s ease, background .3s ease, box-shadow .3s ease;
+  }
+  .stage-icon {
+    width: 20px; height: 20px; border-radius: 50%; background: var(--gray); color: #08121f;
+    font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .stage-label { font-size: 12px; color: var(--text-dim); font-weight: 600; }
+  .stage-role { font-size: 10px; color: var(--text-dim); opacity: 0.7; }
+  .stage.done { border-color: var(--green); }
+  .stage.done .stage-icon { background: var(--green); }
+  .stage.done .stage-label { color: var(--text); }
+  .stage.active {
+    border-color: var(--accent); background: #16233d;
+    box-shadow: 0 0 0 3px rgba(91,157,255,0.15); animation: stagePulse 1.6s ease-in-out infinite;
+  }
+  .stage.active .stage-icon { background: var(--accent); }
+  .stage.active .stage-label { color: var(--text); }
+  @keyframes stagePulse {
+    0%, 100% { box-shadow: 0 0 0 3px rgba(91,157,255,0.15); }
+    50% { box-shadow: 0 0 0 6px rgba(91,157,255,0.04); }
+  }
+  .stage-arrow { color: var(--text-dim); font-size: 14px; }
+
+  .progress-wrap { padding: 10px 28px; border-bottom: 1px solid var(--border); }
+  .progress-track { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s ease; width: 0%; }
+  .progress-text { margin-top: 6px; font-size: 11px; color: var(--text-dim); }
+
+  .tallies { display: flex; gap: 18px; padding: 0 28px 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border); }
+  .tally { font-size: 12px; color: var(--text-dim); }
+  .tally b { color: var(--text); font-size: 13px; }
+  .tally.pass b { color: var(--green); }
+  .tally.retry b { color: var(--yellow); }
+  .tally.human_review b { color: var(--red); }
+
   main {
     display: grid; grid-template-columns: 380px 1fr; grid-template-rows: 1fr;
     gap: 0; height: calc(100vh - 160px);
@@ -73,8 +115,24 @@
   .tag.review_decision.human_review { background: #3b1616; color: var(--red); }
   .tag.job_started, .tag.job_completed { background: #2a2f3a; color: var(--text-dim); }
   .tag.export_failed { background: #3b1616; color: var(--red); }
+  .tag.validation_summary { background: #3a2a5c; color: #b89bff; }
+  .tag.mapping_summary { background: #2a4a3a; color: #6bd9a8; }
   .feed-item .meta { color: var(--text-dim); }
   .feed-empty { padding: 24px 20px; color: var(--text-dim); font-style: italic; }
+
+  .evidence-chips { margin-top: 5px; }
+  .chip {
+    display: inline-block; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+    padding: 1px 8px; font-size: 10.5px; color: var(--text-dim); margin-right: 5px; margin-top: 3px;
+  }
+  .chip.certainty-low { border-color: var(--yellow); color: var(--yellow); }
+  .video-link {
+    display: inline-flex; align-items: center; gap: 4px; color: var(--accent); text-decoration: none;
+    font-size: 11.5px; margin-top: 5px;
+  }
+  .video-link:hover { text-decoration: underline; }
+  .source-link { color: var(--text-dim); font-size: 11px; text-decoration: none; }
+  .source-link:hover { color: var(--accent); }
 
   .results { padding: 20px 28px; overflow-y: auto; min-height: 0; }
   .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 24px; }
@@ -136,6 +194,40 @@
   <span class="dim">No run started yet.</span>
 </div>
 
+<div class="pipeline" id="pipeline">
+  <div class="stage" data-agent="task_intake">
+    <span class="stage-icon">1</span>
+    <span><span class="stage-label">Task Intake</span><br><span class="stage-role">Venue Update Coordinator</span></span>
+  </div>
+  <span class="stage-arrow">→</span>
+  <div class="stage" data-agent="research">
+    <span class="stage-icon">2</span>
+    <span><span class="stage-label">Research</span><br><span class="stage-role">Geo-spatial Research Analyst</span></span>
+  </div>
+  <span class="stage-arrow">→</span>
+  <div class="stage" data-agent="validation">
+    <span class="stage-icon">3</span>
+    <span><span class="stage-label">Validation</span><br><span class="stage-role">Geo-spatial Validation Analyst</span></span>
+  </div>
+  <span class="stage-arrow">→</span>
+  <div class="stage" data-agent="indoor_mapping">
+    <span class="stage-icon">4</span>
+    <span><span class="stage-label">Indoor Mapping</span><br><span class="stage-role">Indoor Mapping Specialist</span></span>
+  </div>
+  <span class="stage-arrow">→</span>
+  <div class="stage" data-agent="publication_review">
+    <span class="stage-icon">5</span>
+    <span><span class="stage-label">Publication Review</span><br><span class="stage-role">SME / QA Reviewer</span></span>
+  </div>
+</div>
+
+<div class="progress-wrap" id="progressWrap" style="display:none">
+  <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+  <div class="progress-text" id="progressText"></div>
+</div>
+
+<div class="tallies" id="tallies" style="display:none"></div>
+
 <main>
   <section class="panel">
     <h2>Agent activity</h2>
@@ -155,10 +247,16 @@
 
 <script>
 const API = ""; // same origin
-let pollTimer = null, trailTimer = null, lastTrailLen = 0, currentJobId = null, floorsCache = [];
+const AGENT_ORDER = ["task_intake", "research", "validation", "indoor_mapping", "publication_review"];
+let pollTimer = null, trailTimer = null, lastTrailLen = 0, currentJobId = null, floorsCache = [], maxIterCache = 4, jobFinished = false;
 
 const feedEl = document.getElementById("feed");
 const statusBar = document.getElementById("statusBar");
+const pipelineEl = document.getElementById("pipeline");
+const progressWrap = document.getElementById("progressWrap");
+const progressFill = document.getElementById("progressFill");
+const progressText = document.getElementById("progressText");
+const talliesEl = document.getElementById("tallies");
 const metricsWrap = document.getElementById("metricsWrap");
 const mapSection = document.getElementById("mapSection");
 const floorTabs = document.getElementById("floorTabs");
@@ -186,7 +284,10 @@ document.getElementById("runForm").addEventListener("submit", async (e) => {
     if (!resp.ok) throw new Error(data.detail || "failed to start run");
     currentJobId = data.job_id;
     floorsCache = floors;
+    maxIterCache = max_iterations;
     setStatusBar("running", `job ${currentJobId}`);
+    progressWrap.style.display = "block";
+    talliesEl.style.display = "flex";
     pollTimer = setInterval(pollStatus, 2500);
     trailTimer = setInterval(pollTrail, 2000);
     pollTrail();
@@ -201,7 +302,14 @@ function resetUI() {
   feedEl.innerHTML = "";
   metricsWrap.innerHTML = "";
   mapSection.style.display = "none";
+  progressWrap.style.display = "none";
+  talliesEl.style.display = "none";
+  progressFill.style.width = "0%";
+  progressText.textContent = "";
+  talliesEl.innerHTML = "";
   lastTrailLen = 0;
+  jobFinished = false;
+  pipelineEl.querySelectorAll(".stage").forEach(s => s.classList.remove("active", "done"));
 }
 
 function setStatusBar(status, extra) {
@@ -215,10 +323,17 @@ async function pollStatus() {
   const job = await resp.json();
   setStatusBar(job.status, `job ${job.job_id} · iteration ${job.iteration}`);
 
+  const pct = Math.min(100, Math.round((job.iteration / maxIterCache) * 100));
+  progressFill.style.width = pct + "%";
+  progressText.textContent = job.status === "running"
+    ? `Iteration ${job.iteration} of up to ${maxIterCache} (Publication Review keeps sending targeted follow-ups back to Research until confidence stabilizes or the cap is hit)`
+    : `Finished after ${job.iteration} iteration${job.iteration === 1 ? "" : "s"}`;
+
   if (job.status === "completed" || job.status === "failed") {
     clearInterval(pollTimer);
     clearInterval(trailTimer);
-    pollTrail(); // final catch-up
+    jobFinished = true;
+    await pollTrail(); // final catch-up
     runBtn.disabled = false;
     runBtn.textContent = "Run";
     if (job.status === "completed" && job.report) {
@@ -235,6 +350,10 @@ async function pollTrail() {
   const resp = await fetch(`${API}/jobs/${currentJobId}/trail`);
   if (!resp.ok) return;
   const trail = await resp.json();
+
+  updatePipeline(trail, jobFinished);
+  updateTallies(trail);
+
   if (trail.length <= lastTrailLen) return;
   const newItems = trail.slice(lastTrailLen);
   lastTrailLen = trail.length;
@@ -243,11 +362,67 @@ async function pollTrail() {
   feedEl.scrollTop = feedEl.scrollHeight;
 }
 
+function updatePipeline(trail, jobFinished) {
+  if (!trail.length) return;
+  if (jobFinished) {
+    // the whole team finished -- show all 5 stages as done rather than
+    // leaving the last one merely "active" (which reads as "still working")
+    pipelineEl.querySelectorAll(".stage").forEach(stage => { stage.classList.remove("active"); stage.classList.add("done"); });
+    return;
+  }
+  // Most-recently-active agent, from the latest event's explicit "agent"
+  // tag -- an honest "who did something most recently" signal (the
+  // pipeline is synchronous, so by the time we poll, that agent's step
+  // has already finished and it may already be on to the next thing).
+  const latestAgent = [...trail].reverse().map(r => r.detail && r.detail.agent).find(Boolean);
+  if (!latestAgent) return;
+  const idx = AGENT_ORDER.indexOf(latestAgent);
+  pipelineEl.querySelectorAll(".stage").forEach(stage => {
+    const stageIdx = AGENT_ORDER.indexOf(stage.dataset.agent);
+    stage.classList.remove("active", "done");
+    if (stageIdx < idx) stage.classList.add("done");
+    else if (stageIdx === idx) stage.classList.add("active");
+  });
+}
+
+function updateTallies(trail) {
+  const evidenceCount = trail.filter(r => r.event === "evidence_collected").length;
+  // keep only each feature's MOST RECENT decision -- a feature retried 3
+  // times across iterations should count once, in its final state, not
+  // three times as "retry" even after it eventually passed or was escalated
+  const latestByFeature = new Map();
+  for (const row of trail) {
+    if (row.event === "review_decision" && row.feature_id) latestByFeature.set(row.feature_id, row);
+  }
+  const counts = { pass: 0, retry: 0, human_review: 0 };
+  for (const row of latestByFeature.values()) {
+    const rec = row.detail && row.detail.recommendation;
+    if (rec in counts) counts[rec]++;
+  }
+  talliesEl.innerHTML = `
+    <span class="tally">Evidence collected: <b>${evidenceCount}</b></span>
+    <span class="tally pass">Published: <b>${counts.pass}</b></span>
+    <span class="tally retry">Still working: <b>${counts.retry}</b></span>
+    <span class="tally human_review">Needs human: <b>${counts.human_review}</b></span>
+  `;
+}
+
+const SOURCE_LABELS = {
+  official_directory: "Official Directory", floorplan: "Floor Plan", web: "Web",
+  youtube_metadata: "YouTube (video info)", youtube_transcript: "YouTube (transcript)", social: "Social",
+};
+
 function renderFeedItem(item) {
   const detail = item.detail || {};
   let tagClass = item.event, label = "";
+
   if (item.event === "evidence_collected") {
-    label = `${escapeHtml(detail.entity || "")} — <span class="meta">${escapeHtml(detail.source_type || "")} evidence, floor ${detail.floor}</span>`;
+    label = renderEvidenceItem(detail);
+  } else if (item.event === "validation_summary") {
+    label = `Validation resolved <b>${detail.entities_resolved}</b> entities on floor ${detail.floor}` +
+      (detail.conflicts ? ` — <span class="meta">${detail.conflicts} conflict${detail.conflicts === 1 ? "" : "s"} flagged</span>` : ` — <span class="meta">no conflicts</span>`);
+  } else if (item.event === "mapping_summary") {
+    label = `Indoor Mapping built <b>${detail.features_built}</b> store feature${detail.features_built === 1 ? "" : "s"} on floor ${detail.floor}`;
   } else if (item.event === "review_decision") {
     tagClass = `review_decision ${detail.recommendation || ""}`;
     label = `${escapeHtml((item.feature_id || "").split(":").pop())} → <b>${escapeHtml(detail.recommendation || "")}</b> — <span class="meta">${escapeHtml(detail.reason || "")}</span>`;
@@ -259,6 +434,34 @@ function renderFeedItem(item) {
     label = escapeHtml(JSON.stringify(detail));
   }
   return `<div class="feed-item"><span class="tag ${tagClass}">${escapeHtml(item.event)}</span>${label} <span class="meta">· iter ${item.iteration}</span></div>`;
+}
+
+function renderEvidenceItem(detail) {
+  const sourceLabel = SOURCE_LABELS[detail.source_type] || detail.source_type || "";
+  let out = `${escapeHtml(detail.entity || "")} — <span class="meta">${escapeHtml(sourceLabel)}, floor ${detail.floor}</span>`;
+
+  // observation values as chips, e.g. floor: 2, unit: S245, timestamp: 00:02:02
+  const obs = detail.observation || {};
+  const chips = Object.entries(obs)
+    .filter(([k]) => k !== "ocr_results" && k !== "synthetic_grid") // internal floorplan-only payload, not user-facing
+    .map(([k, v]) => `<span class="chip">${escapeHtml(k)}: ${escapeHtml(v)}</span>`);
+
+  if (typeof detail.certainty === "number" && detail.certainty < 0.7) {
+    chips.push(`<span class="chip certainty-low">certainty: ${Math.round(detail.certainty * 100)}%${detail.certainty_reason ? " (" + escapeHtml(detail.certainty_reason) + ")" : ""}</span>`);
+  }
+  if (chips.length) out += `<div class="evidence-chips">${chips.join("")}</div>`;
+
+  // the actual video, when the evidence came from YouTube -- exactly "what
+  // video is being referenced"
+  if ((detail.source_type === "youtube_metadata" || detail.source_type === "youtube_transcript") && detail.source_url) {
+    const label = detail.source_type === "youtube_metadata"
+      ? (detail.raw_excerpt ? truncate(detail.raw_excerpt, 60) : "Watch video")
+      : (obs.timestamp ? `Watch at ${obs.timestamp}` : "Watch video");
+    out += `<br><a class="video-link" href="${escapeAttr(detail.source_url)}" target="_blank" rel="noopener">▶ ${escapeHtml(label)}</a>`;
+  } else if (detail.source_url) {
+    out += `<br><a class="source-link" href="${escapeAttr(detail.source_url)}" target="_blank" rel="noopener">${escapeHtml(truncate(detail.source_url, 70))}</a>`;
+  }
+  return out;
 }
 
 function renderMetrics(report) {

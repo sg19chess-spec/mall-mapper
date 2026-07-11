@@ -8,6 +8,12 @@ If the loop stagnates (converges) while features are still stuck on
 "retry" -- i.e. no further evidence is reachable, not because everything
 passed -- a final forced pass runs at iteration=max_iterations so those
 features are escalated to human_review instead of silently dropped.
+
+Every audit event carries an explicit "agent" tag in its detail dict (one
+of AGENT_TASK_INTAKE / AGENT_RESEARCH / AGENT_VALIDATION /
+AGENT_INDOOR_MAPPING / AGENT_PUBLICATION_REVIEW) so a UI can show which of
+the 5 agents is active right now from the latest event alone, rather than
+inferring it from the event name.
 """
 from __future__ import annotations
 
@@ -18,6 +24,12 @@ from app.agents.task_intake import TaskIntakeAgent
 from app.agents.validation import ValidationAgent
 from app.eval.accuracy import compute_accuracy_report
 from app.schemas import RunConfig
+
+AGENT_TASK_INTAKE = "task_intake"
+AGENT_RESEARCH = "research"
+AGENT_VALIDATION = "validation"
+AGENT_INDOOR_MAPPING = "indoor_mapping"
+AGENT_PUBLICATION_REVIEW = "publication_review"
 
 
 class Orchestrator:
@@ -42,13 +54,21 @@ class Orchestrator:
         for floor in config.floors:
             all_evidence = self.store.get_all_evidence(config.mall, floor)
             validation_result = self.validation.run(all_evidence)
-            total_conflicts += len(validation_result["conflicts"])
+            floor_conflicts = len(validation_result["conflicts"])
+            total_conflicts += floor_conflicts
+            self.store.log_audit(job_id, iteration, "validation_summary", detail={
+                "agent": AGENT_VALIDATION, "floor": floor,
+                "entities_resolved": len(validation_result["entities"]), "conflicts": floor_conflicts,
+            })
 
             floorplan_evidence = next(
                 (e for e in all_evidence if e["entity_raw"].startswith(FLOORPLAN_ENTITY_KEY)), None
             )
             features = self.indoor_mapping.run(config.mall, floor, validation_result, floorplan_evidence)
             store_features = [f for f in features if f["feature_type"] == "store"]
+            self.store.log_audit(job_id, iteration, "mapping_summary", detail={
+                "agent": AGENT_INDOOR_MAPPING, "floor": floor, "features_built": len(store_features),
+            })
 
             for feature in store_features:
                 min_conf = min(feature["confidence_by_attribute"].values()) if feature["confidence_by_attribute"] else 0.0
@@ -61,6 +81,7 @@ class Orchestrator:
                     config.mall, floor, feature, features, iteration, config.max_iterations
                 )
                 self.store.log_audit(job_id, iteration, "review_decision", feature_id=feature["feature_id"], detail={
+                    "agent": AGENT_PUBLICATION_REVIEW,
                     "recommendation": report.recommendation, "reason": report.reason,
                     "confidence_by_attribute": report.confidence_by_attribute,
                 })
@@ -70,7 +91,9 @@ class Orchestrator:
 
     def run(self, job_id: str, config: RunConfig) -> dict:
         self.store.create_job(job_id, config.mall, config.floors)
-        self.store.log_audit(job_id, 0, "job_started", detail={"mall": config.mall, "floors": config.floors})
+        self.store.log_audit(job_id, 0, "job_started", detail={
+            "agent": AGENT_TASK_INTAKE, "mall": config.mall, "floors": config.floors,
+        })
 
         queue = self.task_intake.run(config)
         prev_confidences: dict[str, float] = {}
@@ -87,8 +110,18 @@ class Orchestrator:
                 new_evidence_count += len(evidence_list)
                 for ev in evidence_list:
                     self.store.insert_evidence(ev.model_dump(mode="json"), config.mall, subtask.floor)
+                    # Full evidence detail (not just a category label) so a
+                    # UI can show exactly what was found -- the actual
+                    # observation values, the source URL (a YouTube video
+                    # link for youtube_metadata/youtube_transcript rows,
+                    # the directory/floor-plan page otherwise), and the
+                    # certainty/hedge-language assessment.
                     self.store.log_audit(job_id, iteration, "evidence_collected", detail={
-                        "entity": ev.entity_raw, "source_type": ev.source_type.value, "floor": subtask.floor,
+                        "agent": AGENT_RESEARCH, "entity": ev.entity_raw,
+                        "source_type": ev.source_type.value, "floor": subtask.floor,
+                        "observation": ev.observation, "source_url": ev.source_url,
+                        "raw_excerpt": ev.raw_excerpt, "certainty": ev.certainty,
+                        "certainty_reason": ev.certainty_reason,
                     })
 
             next_queue, total_conflicts, max_delta = self._process_floors(job_id, config, iteration, prev_confidences)
@@ -132,5 +165,9 @@ class Orchestrator:
             "human_review_queue_size": len(self.store.get_review_queue("open")),
         }
         self.store.update_job(job_id, status="completed", iteration=iteration, report=report)
+        # deliberately no "agent" tag here -- a UI showing "most recently
+        # active agent" should stay on whichever agent did the last real
+        # work (Publication Review), not jump back to Task Intake just
+        # because it's nominally the coordinator wrapping things up.
         self.store.log_audit(job_id, iteration, "job_completed", detail=report)
         return report
