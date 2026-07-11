@@ -6,6 +6,8 @@ cross-validates every claim against multiple independent pieces of evidence, and
 only publishes what's actually corroborated — escalating everything else to human
 review instead of guessing.
 
+**Live**: https://mall-mapper.onrender.com · **Source**: https://github.com/sg19chess-spec/mall-mapper
+
 ## The problem this solves
 
 Indoor mapping vendors (this project is modeled on the Point Inside case study)
@@ -140,7 +142,7 @@ app/
                           ground_truth.py
   main.py                 FastAPI entrypoint
 db/schema.sql             Postgres migration for a real Supabase project
-tests/                    60 tests: unit (validation agent, rule engine), integration
+tests/                    62 tests: unit (validation agent, rule engine), integration
                           (publication review), end-to-end (full orchestrator + eval)
 requirements.txt          production dependencies
 requirements-dev.txt      + pytest
@@ -179,7 +181,7 @@ curl "localhost:8000/geojson/2?mall=Mall%20of%20America"
 python -m pytest tests/ -v
 ```
 
-60 tests, ~20-30s, no network or credentials required — `tests/test_accuracy_eval.py`
+62 tests, ~20-30s, no network or credentials required — `tests/test_accuracy_eval.py`
 explicitly forces the directory scraper offline (`force_offline_scraping` fixture)
 so the suite stays deterministic even when live network access happens to be
 available in the environment running it.
@@ -199,39 +201,100 @@ available in the environment running it.
 
 ## Deployment
 
+**Live**: https://mall-mapper.onrender.com — deployed on Render, backed by a real
+Supabase project (Postgres + Storage), running the full pipeline against the real
+Mall of America site.
+
 1. **GitHub**: the repo is pushed to https://github.com/sg19chess-spec/mall-mapper.
-2. **Supabase**: create a project at supabase.com, run `db/schema.sql` against it
-   (all 8 tables, confirmed created), grab the project URL and `service_role`
-   key (Project Settings → API).
+2. **Supabase**: a real project is provisioned; `db/schema.sql` has been applied
+   (all 8 tables confirmed created), and all 7 Storage buckets (`floorplans`,
+   `images`, `ocr`, `geojson`, `reports`, `screenshots`, `youtube_frames`) exist.
+   To reproduce: create a project at supabase.com, run `db/schema.sql` against
+   it, create the same 7 buckets, and grab the project URL + `service_role` key
+   (Project Settings → API).
 3. **Docker**: `docker build -t mall-mapper .` — installs `tesseract-ocr` and
    Playwright's Chromium alongside the app (this is why Docker is required for
    deployment rather than Render's native Python runtime, which can't install
-   those system-level binaries). Verified: builds successfully, and a
-   container from it runs a full pipeline job end-to-end, including live
-   scraping from inside the container.
-4. **Render**: **New → Blueprint**, connect the GitHub repo — it picks up
-   `render.yaml` (`env: docker`) automatically. Set the secret env vars
-   (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
-   `ANTHROPIC_API_KEY` and/or `OPENAI_API_KEY`) in the dashboard's
-   Environment tab, then deploy.
+   those system-level binaries).
+4. **Render**: connected via the GitHub repo (manual "New Web Service" flow,
+   Docker language auto-detected), with auto-deploy on push to `master`. Secret
+   env vars (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`)
+   set in the dashboard's Environment tab. `ANTHROPIC_API_KEY`/`OPENAI_API_KEY`
+   intentionally left unset (see Known Limitations).
+
+### Bugs found only by actually deploying (not visible from local dev-mode testing)
+
+Local dev-mode testing uses a throwaway SQLite file and local directories that
+auto-create themselves — none of these four surfaced until the app ran against
+a real, persistent Supabase project and a real network path:
+
+1. **Missing Storage buckets.** Dev mode auto-creates local directories for each
+   bucket; production mode assumes the buckets already exist server-side (Supabase
+   Storage buckets don't auto-create). First live `/run` failed with `Bucket not
+   found` when exporting GeoJSON/reports. Fixed by creating the 7 buckets directly.
+2. **A downstream export failure was clobbering a successful job's status.**
+   `orchestrator.run()` already marks a job `"completed"` with its real report as
+   its last internal step; `routes.py`'s `_worker()` then does GeoJSON/report
+   export *after* that, and a single shared `except` block was overwriting the
+   already-`"completed"` status with `{"error": ...}` when the export step failed
+   — even though the pipeline itself had fully succeeded (confirmed: 16 evidence
+   rows, 4 published features, 8 review reports were correctly in Postgres despite
+   `/status` reporting `"failed"`). Fixed by separating the two `try`/`except`
+   blocks so an export failure is logged, not treated as a pipeline failure.
+3. **Ground truth double-counted across repeated runs.** Evidence persists across
+   separate `/run` calls against the same `(mall, floor)` in production, and
+   Research always does a fresh broad scrape rather than skipping an
+   already-scraped floor. Running the same floor twice inserted a second full set
+   of `official_directory` evidence rows for every store, and
+   `load_ground_truth_from_evidence` counted each duplicate row as a separate
+   "true" store — observed live as `directory_agreement.precision: 3.0`, which is
+   mathematically impossible (precision is bounded to [0, 1]). Fixed by
+   deduplicating ground truth by normalized store name, keeping the freshest row.
+4. **Live scraping was silently falling back to sample data on Render.** Every
+   `/run` on Render returned exactly the 4 bundled `SAMPLE_DIRECTORY` floor-1
+   stores, never real data — despite live scraping working from a local Docker
+   container test. `fetch_rendered_html`'s exception was silently swallowed
+   (`except Exception: return None`), so the failure was invisible until logging
+   was added. The actual cause, revealed once logged: `page.goto()` uses
+   Playwright's default `wait_until="load"`, which blocks on *every* subresource
+   finishing — including third-party ad/tracking scripts (doubleclick.net etc.)
+   and the Jibestream map SDK visible in the page's own HTML — and was timing out
+   at 20s. Fixed by switching to `wait_until="domcontentloaded"` (the code already
+   separately waits for the actual content selector via `wait_for_selector`, so
+   waiting for ads to finish loading was never necessary) and bumping the timeout
+   to 30s for margin.
+
+All four confirmed fixed against the live deployment: a `/run` job now correctly
+scrapes real data (`ground_truth_count: 17` on floor 1, vs. the 4-store sample
+fallback), publishes what clears the confidence bar, escalates the rest to
+`human_review`, and reports valid (≤1.0) accuracy metrics throughout.
 
 ## Real-world verification performed
 
 - **Live directory scraping**: confirmed against the actual mallofamerica.com
-  site. It's a Drupal site whose directory renders via JavaScript — a static
-  fetch returns the page shell with zero store rows, so `web.py::get_store_directory()`
-  falls back to a Playwright-rendered fetch, parsed with a site-specific selector
-  set (`.card__tile--details`). Successfully scraped 46+ real stores across
-  floors 1-4 with correct name/category/unit, including deriving floor number
-  from MOA's own unit-numbering convention (leading digit of e.g. "228 West
-  Market" → floor 2).
+  site, both locally and from the deployed Render service. It's a Drupal site
+  whose directory renders via JavaScript — a static fetch returns the page shell
+  with zero store rows, so `web.py::get_store_directory()` falls back to a
+  Playwright-rendered fetch, parsed with a site-specific selector set
+  (`.card__tile--details`). Successfully scraped 46+ real stores across floors
+  1-4 with correct name/category/unit, including deriving floor number from
+  MOA's own unit-numbering convention (leading digit of e.g. "228 West Market"
+  → floor 2).
 - **Real OCR**: MOA's floor plan is an interactive Jibestream vector map, not a
   static image — screenshotted the rendered Map View tab with Playwright and ran
   `pytesseract` against it; correctly extracted real labels ("NORDSTROM",
   "Parking", etc.) at high confidence.
 - **Scraping reliability**: the live site is intermittently flaky under
   back-to-back automated requests (likely bot-detection/rate-limiting) — added a
-  2-attempt retry in `get_store_directory()`, which resolved it in testing.
+  2-attempt retry in `get_store_directory()`. Render's environment additionally
+  needed a `page.goto()` fix (see the deployment bugs above) that local testing
+  never surfaced, since local network conditions happened to be fast enough to
+  mask it.
+- **Full live deployment**: end-to-end pipeline verified against the actual
+  Render + Supabase stack — real scraping, real evidence persisted to Postgres,
+  real GeoJSON exported to Storage, real confidence-gated publication vs.
+  human-review escalation. See the deployment bugs section above for the four
+  issues this surfaced that no amount of local/dev-mode testing would have.
 
 ## Known limitations
 
@@ -269,10 +332,6 @@ available in the environment running it.
   knowledge graph distinct from the evidence graph, semantic validation rules,
   spatial indexing in active use (`spatial_index.py` exists but isn't called by
   any agent yet).
-- **The Docker image has been built and verified to actually run** (see below) —
-  the service has not yet been deployed to Render, which additionally needs a
-  Render account.
-
 ### Building the Docker image: two real bugs found and fixed
 
 Both only surfaced by actually running the build, not from code review:
@@ -302,12 +361,20 @@ the image.
 
 | Claim | Status |
 |---|---|
-| 5-agent pipeline logic is correct | ✅ 60 passing tests |
+| 5-agent pipeline logic is correct | ✅ 62 passing tests |
 | Confidence/conflict/spatial-reasoning math is correct | ✅ Unit-tested directly against `ValidationAgent` |
 | Geometry rule checks correctly gate publication | ✅ Unit + integration tested; one real bug found and fixed (`floor_boundary` self-inclusion) |
-| Live scraping works against a real, JS-rendered mall site | ✅ Manually verified, 46+ real stores (locally and inside the Docker container) |
+| Live scraping works against a real, JS-rendered mall site | ✅ Verified locally, inside a local Docker container, and on the live Render deployment |
 | Real OCR works against a real floor plan | ✅ Manually verified |
-| Full pipeline publishes real scraped data end-to-end | ⚠️ Partially — correctly triages real data to `human_review` rather than under-evidenced auto-publish (see Known Limitations) |
-| Postgres schema is valid | ✅ Syntax-checked; not yet applied to a live Supabase project |
+| Full pipeline publishes real scraped data end-to-end | ✅ Verified live: real evidence → real confidence-gated publication vs. human-review escalation, with valid (≤1.0) accuracy metrics |
+| Postgres schema is valid | ✅ Applied to a real Supabase project; all 8 tables + 7 Storage buckets confirmed created |
 | Docker image builds successfully | ✅ Builds, and a container from it runs a full pipeline job successfully |
-| Service runs on Render | ❌ Not yet attempted |
+| Service runs on Render | ✅ Live at https://mall-mapper.onrender.com, auto-deploying from `master` |
+
+Four additional production-only bugs were found and fixed during the live
+deployment itself (missing Storage buckets, job status clobbering, ground
+truth double-counting, and a Playwright navigation hang) — see the deployment
+section above for details. None of these were visible from local dev-mode
+testing, which is itself a finding: dev-mode fallbacks are good for fast
+iteration but cannot substitute for testing against the real, persistent,
+network-exposed production path.
