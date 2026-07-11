@@ -22,8 +22,27 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import httpx
+
 _SUPABASE_URL = os.environ.get("SUPABASE_URL")
 _SUPABASE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+
+# The Supabase client's httpx.Client holds a persistent keep-alive
+# connection for the life of the process. Supabase's edge proxy can close
+# that connection server-side (idle timeout) without httpx noticing until
+# the next request tries to reuse it, raising RemoteProtocolError instead
+# of transparently reconnecting -- a known httpx footgun, not a real
+# failure. execute() only reads already-built request attributes off the
+# builder (see postgrest-py's SyncQueryRequestBuilder.execute), so calling
+# it again on the same builder is safe.
+_RETRYABLE_ERRORS = (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadError, httpx.WriteError)
+
+
+def _execute(builder):
+    try:
+        return builder.execute()
+    except _RETRYABLE_ERRORS:
+        return builder.execute()
 
 _DEV_DB_PATH = Path(__file__).resolve().parent.parent.parent / "dev_data" / "mall_mapper.db"
 
@@ -173,7 +192,7 @@ class Store:
             )
             self._conn.commit()
         else:
-            self._client.table("evidence").upsert(row).execute()
+            _execute(self._client.table("evidence").upsert(row))
 
     def get_evidence_for_entity(self, mall: str, floor: int, entity_normalized: str) -> list[dict]:
         if self.dev_mode:
@@ -182,7 +201,7 @@ class Store:
             )
             rows = [dict(r) for r in cur.fetchall()]
         else:
-            rows = self._client.table("evidence").select("*").eq("mall", mall).eq("floor", floor).execute().data
+            rows = _execute(self._client.table("evidence").select("*").eq("mall", mall).eq("floor", floor)).data
         out = []
         for r in rows:
             if isinstance(r.get("observation"), str):
@@ -196,7 +215,7 @@ class Store:
             cur = self._conn.execute("SELECT * FROM evidence WHERE mall=? AND floor=?", (mall, floor))
             rows = [dict(r) for r in cur.fetchall()]
         else:
-            rows = self._client.table("evidence").select("*").eq("mall", mall).eq("floor", floor).execute().data
+            rows = _execute(self._client.table("evidence").select("*").eq("mall", mall).eq("floor", floor)).data
         for r in rows:
             if isinstance(r.get("observation"), str):
                 r["observation"] = json.loads(r["observation"])
@@ -211,13 +230,12 @@ class Store:
                 (entity_normalized, source_type, query),
             )
             return cur.fetchone() is not None
-        res = (
+        res = _execute(
             self._client.table("research_memory")
             .select("entity_normalized")
             .eq("entity_normalized", entity_normalized)
             .eq("source_type", source_type)
             .eq("query", query)
-            .execute()
         )
         return len(res.data) > 0
 
@@ -233,7 +251,7 @@ class Store:
             )
             self._conn.commit()
         else:
-            self._client.table("research_memory").upsert(row).execute()
+            _execute(self._client.table("research_memory").upsert(row))
 
     # -- indoor features ------------------------------------------------------
 
@@ -264,7 +282,7 @@ class Store:
             )
             self._conn.commit()
         else:
-            self._client.table("indoor_features").upsert(row).execute()
+            _execute(self._client.table("indoor_features").upsert(row))
 
     def get_published_features(self, mall: str, floor: int) -> list[dict]:
         if self.dev_mode:
@@ -274,10 +292,10 @@ class Store:
             )
             rows = [dict(r) for r in cur.fetchall()]
         else:
-            rows = (
+            rows = _execute(
                 self._client.table("indoor_features").select("*").eq("mall", mall).eq("floor", floor)
-                .is_("valid_until", "null").execute().data
-            )
+                .is_("valid_until", "null")
+            ).data
         for r in rows:
             for key in ("geometry", "properties", "confidence_by_attribute", "evidence"):
                 if isinstance(r.get(key), str):
@@ -290,10 +308,10 @@ class Store:
                 "SELECT * FROM indoor_features WHERE feature_id=? ORDER BY version", (feature_id,)
             )
             return [dict(r) for r in cur.fetchall()]
-        return (
+        return _execute(
             self._client.table("indoor_features").select("*").eq("feature_id", feature_id)
-            .order("version").execute().data
-        )
+            .order("version")
+        ).data
 
     # -- review reports / queue -----------------------------------------------
 
@@ -318,7 +336,7 @@ class Store:
             )
             self._conn.commit()
         else:
-            self._client.table("review_reports").insert(row).execute()
+            _execute(self._client.table("review_reports").insert(row))
 
     def upsert_review_item(self, item: dict) -> None:
         row = {
@@ -330,14 +348,14 @@ class Store:
             self._conn.execute("INSERT OR REPLACE INTO review_queue VALUES (?,?,?,?,?,?)", tuple(row.values()))
             self._conn.commit()
         else:
-            self._client.table("review_queue").upsert(row).execute()
+            _execute(self._client.table("review_queue").upsert(row))
 
     def get_review_queue(self, status: str = "open") -> list[dict]:
         if self.dev_mode:
             cur = self._conn.execute("SELECT * FROM review_queue WHERE status=?", (status,))
             rows = [dict(r) for r in cur.fetchall()]
         else:
-            rows = self._client.table("review_queue").select("*").eq("status", status).execute().data
+            rows = _execute(self._client.table("review_queue").select("*").eq("status", status)).data
         for r in rows:
             if isinstance(r.get("evidence"), str):
                 r["evidence"] = json.loads(r["evidence"])
@@ -359,14 +377,14 @@ class Store:
             )
             self._conn.commit()
         else:
-            self._client.table("audit_logs").insert(row).execute()
+            _execute(self._client.table("audit_logs").insert(row))
 
     def get_audit_trail(self, job_id: str) -> list[dict]:
         if self.dev_mode:
             cur = self._conn.execute("SELECT * FROM audit_logs WHERE job_id=? ORDER BY id", (job_id,))
             rows = [dict(r) for r in cur.fetchall()]
         else:
-            rows = self._client.table("audit_logs").select("*").eq("job_id", job_id).order("id").execute().data
+            rows = _execute(self._client.table("audit_logs").select("*").eq("job_id", job_id).order("id")).data
         for r in rows:
             if isinstance(r.get("detail"), str) and r["detail"]:
                 r["detail"] = json.loads(r["detail"])
@@ -384,11 +402,11 @@ class Store:
             )
             self._conn.commit()
         else:
-            self._client.table("change_log").insert({
+            _execute(self._client.table("change_log").insert({
                 "feature_id": feature_id, "change_type": change_type, "from_version": from_version,
                 "to_version": to_version, "detail": json.dumps(detail) if detail else None,
                 "created_at": _now_iso(),
-            }).execute()
+            }))
 
     # -- jobs -------------------------------------------------------------------
 
@@ -402,10 +420,10 @@ class Store:
             )
             self._conn.commit()
         else:
-            self._client.table("jobs").insert({
+            _execute(self._client.table("jobs").insert({
                 "job_id": job_id, "mall": mall, "floors": json.dumps(floors), "status": "running",
                 "iteration": 0, "report": None, "created_at": _now_iso(), "updated_at": _now_iso(),
-            }).execute()
+            }))
 
     def update_job(self, job_id: str, status: str | None = None, iteration: int | None = None, report: dict | None = None) -> None:
         if self.dev_mode:
@@ -428,7 +446,7 @@ class Store:
                 patch["iteration"] = iteration
             if report is not None:
                 patch["report"] = json.dumps(report)
-            self._client.table("jobs").update(patch).eq("job_id", job_id).execute()
+            _execute(self._client.table("jobs").update(patch).eq("job_id", job_id))
 
     def get_job(self, job_id: str) -> dict | None:
         if self.dev_mode:
@@ -438,7 +456,7 @@ class Store:
                 return None
             out = dict(row)
         else:
-            data = self._client.table("jobs").select("*").eq("job_id", job_id).execute().data
+            data = _execute(self._client.table("jobs").select("*").eq("job_id", job_id)).data
             if not data:
                 return None
             out = data[0]
