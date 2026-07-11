@@ -137,7 +137,7 @@ def get_store_directory(base_url: str, floor: int | None = None) -> list[dict]:
         # selector (which would fail every attempt the same way).
         for attempt in range(2):
             rendered_html = fetch_rendered_html(
-                f"{base_url.rstrip('/')}/directory", wait_selector=".card__tile--details", timeout_ms=20000,
+                f"{base_url.rstrip('/')}/directory", wait_selector=".card__tile--details", timeout_ms=30000,
             )
             if rendered_html:
                 stores = parse_moa_directory_html(rendered_html)

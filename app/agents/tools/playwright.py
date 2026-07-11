@@ -26,7 +26,13 @@ def fetch_rendered_html(url: str, wait_selector: str | None = None, timeout_ms: 
         with sync_playwright() as p:
             browser = p.chromium.launch(args=_LAUNCH_ARGS)
             page = browser.new_page()
-            page.goto(url, timeout=timeout_ms)
+            # wait_until="load" (Playwright's default) blocks on *every*
+            # subresource finishing -- including third-party ad/tracking
+            # scripts (doubleclick.net etc.) and the Jibestream map SDK --
+            # which is slow and occasionally hangs outright. We only need
+            # the DOM to exist so wait_for_selector can find our actual
+            # content below, not for ads to finish loading.
+            page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
             if wait_selector:
                 page.wait_for_selector(wait_selector, timeout=timeout_ms)
             else:
