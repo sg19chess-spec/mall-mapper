@@ -33,10 +33,21 @@ def run_job(req: RunRequest):
     def _worker():
         try:
             report = orchestrator.run(job_id, config)
-            _export_geojson(store, config.mall, config.floors)
-            get_storage().put_json("reports", f"{job_id}/run_report.json", report)
         except Exception as exc:  # keep job status queryable even on failure
             store.update_job(job_id, status="failed", report={"error": str(exc)})
+            return
+
+        # orchestrator.run() already marked the job "completed" with its
+        # real report as its last step. A failure in this export step
+        # (e.g. a missing Storage bucket) is a separate, lower-stakes
+        # concern -- it must not clobber a successful pipeline run's
+        # status/report, so it's logged instead of re-raised into the
+        # same except block that handles orchestrator failures.
+        try:
+            _export_geojson(store, config.mall, config.floors)
+            get_storage().put_json("reports", f"{job_id}/run_report.json", report)
+        except Exception as exc:
+            store.log_audit(job_id, 0, "export_failed", detail={"error": str(exc)})
 
     threading.Thread(target=_worker, daemon=True).start()
     return {"job_id": job_id, "status": "running"}
