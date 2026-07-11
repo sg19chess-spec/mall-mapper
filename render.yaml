@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: mall-mapper
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /root/.cache/ms-playwright
+      - key: PYTHONUNBUFFERED
+        value: "1"
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
