@@ -16,6 +16,20 @@ router = APIRouter()
 
 BASE_URL = os.environ.get("MALL_BASE_URL", "https://www.mallofamerica.com")
 
+# In-process concurrency guard: this deployment runs a single Uvicorn worker
+# (Render sets WEB_CONCURRENCY=1 on smaller instances), and the background
+# job thread does CPU-heavy work (Playwright/Chromium, synchronous Postgrest
+# calls) that competes with the main request-handling thread for the GIL.
+# Confirmed live: two simultaneous /run jobs caused a dropped Supabase
+# connection on one job and intermittent 500s on /status polling for the
+# other -- not a data-correctness bug, a genuine capacity limit. Rejecting a
+# second concurrent run with a clear 409 beats letting both silently starve
+# each other. An in-memory lock is sufficient because there's only one
+# worker process; it would need to move to a DB-backed lock if this ever
+# runs with WEB_CONCURRENCY > 1.
+_run_lock = threading.Lock()
+_active_job_id: str | None = None
+
 
 class RunRequest(BaseModel):
     mall: str = "Mall of America"
@@ -26,29 +40,44 @@ class RunRequest(BaseModel):
 
 @router.post("/run")
 def run_job(req: RunRequest):
+    global _active_job_id
+    if not _run_lock.acquire(blocking=False):
+        raise HTTPException(
+            409,
+            f"A job is already running (job_id={_active_job_id}). This deployment runs one "
+            "job at a time -- running two at once causes dropped connections and 500s from "
+            "resource contention. Wait for it to finish and try again.",
+        )
+
     job_id = str(uuid4())
+    _active_job_id = job_id
     config = RunConfig(mall=req.mall, floors=req.floors, max_iterations=req.max_iterations)
     store = get_store()
     orchestrator = Orchestrator(store, req.base_url or BASE_URL)
 
     def _worker():
+        global _active_job_id
         try:
-            report = orchestrator.run(job_id, config)
-        except Exception as exc:  # keep job status queryable even on failure
-            store.update_job(job_id, status="failed", report={"error": str(exc)})
-            return
+            try:
+                report = orchestrator.run(job_id, config)
+            except Exception as exc:  # keep job status queryable even on failure
+                store.update_job(job_id, status="failed", report={"error": str(exc)})
+                return
 
-        # orchestrator.run() already marked the job "completed" with its
-        # real report as its last step. A failure in this export step
-        # (e.g. a missing Storage bucket) is a separate, lower-stakes
-        # concern -- it must not clobber a successful pipeline run's
-        # status/report, so it's logged instead of re-raised into the
-        # same except block that handles orchestrator failures.
-        try:
-            _export_geojson(store, config.mall, config.floors)
-            get_storage().put_json("reports", f"{job_id}/run_report.json", report)
-        except Exception as exc:
-            store.log_audit(job_id, 0, "export_failed", detail={"error": str(exc)})
+            # orchestrator.run() already marked the job "completed" with its
+            # real report as its last step. A failure in this export step
+            # (e.g. a missing Storage bucket) is a separate, lower-stakes
+            # concern -- it must not clobber a successful pipeline run's
+            # status/report, so it's logged instead of re-raised into the
+            # same except block that handles orchestrator failures.
+            try:
+                _export_geojson(store, config.mall, config.floors)
+                get_storage().put_json("reports", f"{job_id}/run_report.json", report)
+            except Exception as exc:
+                store.log_audit(job_id, 0, "export_failed", detail={"error": str(exc)})
+        finally:
+            _active_job_id = None
+            _run_lock.release()
 
     threading.Thread(target=_worker, daemon=True).start()
     return {"job_id": job_id, "status": "running"}

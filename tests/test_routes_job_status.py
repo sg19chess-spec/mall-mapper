@@ -8,6 +8,7 @@ because the GeoJSON export step (a separate concern) threw afterward.
 """
 from __future__ import annotations
 
+import threading
 import time
 
 import pytest
@@ -35,6 +36,36 @@ def force_offline_scraping(monkeypatch):
 
     monkeypatch.setattr(web_module, "fetch_directory_html", lambda *a, **k: None)
     monkeypatch.setattr(web_module, "fetch_rendered_html", lambda *a, **k: None)
+
+
+@pytest.fixture(autouse=True)
+def reset_run_lock():
+    """_run_lock/_active_job_id are module-level globals guarding real
+    concurrency in production -- but that also makes them shared state
+    across tests in this file. Two things to guard against here:
+
+    1. A test that posts /run without waiting for the background job to
+       finish would otherwise leave the lock held, causing an unrelated
+       later test's /run call to spuriously 409.
+    2. Naively reassigning `_run_lock` to a fresh Lock() object doesn't
+       actually fix that -- _worker()'s `finally: _run_lock.release()`
+       resolves `_run_lock` from the module namespace at call time (it's
+       a `global`, not a captured local), so if a still-running
+       background thread from the *previous* test releases *after* this
+       fixture has already swapped in a new Lock object, it raises
+       "release unlocked lock" against the new object. So: never swap the
+       object: force-release the *same* lock if left held, and on
+       teardown wait for any in-flight background thread to release it
+       naturally instead of yanking it out from under that thread.
+    """
+    if routes_module._run_lock.locked():
+        routes_module._run_lock.release()
+    routes_module._active_job_id = None
+    yield
+    for _ in range(50):
+        if not routes_module._run_lock.locked():
+            break
+        time.sleep(0.1)
 
 
 def test_export_failure_does_not_clobber_a_completed_job(tmp_path, monkeypatch):
@@ -118,3 +149,47 @@ def test_job_trail_endpoint_returns_full_agent_activity(tmp_path, monkeypatch):
     assert "evidence_collected" in events
     assert "review_decision" in events
     assert "job_completed" in events
+
+
+def test_concurrent_run_rejected_with_409(tmp_path, monkeypatch):
+    """Regression test for a bug found live: two /run jobs running at once
+    on this single-worker deployment caused a dropped Supabase connection
+    on one job and intermittent 500s on /status polling for the other.
+    A second /run while one is already in progress must be rejected
+    immediately with a clear error, not silently accepted to fight over
+    the same CPU/connections."""
+    monkeypatch.setattr(supabase_module, "_DEV_DB_PATH", tmp_path / "test.db")
+    monkeypatch.setattr(supabase_module, "_store", None)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    import app.orchestrator as orchestrator_module
+    original_run = orchestrator_module.Orchestrator.run
+
+    def blocking_run(self, job_id, config):
+        started.set()
+        release.wait(timeout=10)
+        return original_run(self, job_id, config)
+
+    monkeypatch.setattr(orchestrator_module.Orchestrator, "run", blocking_run)
+
+    client = TestClient(app)
+    resp1 = client.post("/run", json={"mall": "Mall of America", "floors": [1], "max_iterations": 1})
+    assert resp1.status_code == 200
+    assert started.wait(timeout=5), "first job's worker thread never entered run()"
+
+    resp2 = client.post("/run", json={"mall": "Mall of America", "floors": [1], "max_iterations": 1})
+    assert resp2.status_code == 409
+    assert "already running" in resp2.json()["detail"]
+
+    release.set()  # let the first job finish
+
+    # the lock should free up once the first job's background thread exits
+    resp3 = None
+    for _ in range(30):
+        resp3 = client.post("/run", json={"mall": "Mall of America", "floors": [1], "max_iterations": 1})
+        if resp3.status_code == 200:
+            break
+        time.sleep(0.3)
+    assert resp3 is not None and resp3.status_code == 200, resp3.json() if resp3 else None
