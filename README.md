@@ -166,12 +166,17 @@ python -m playwright install chromium   # only needed for live scraping; OCR nee
 uvicorn app.main:app --reload
 ```
 
-Then:
+Then either open **http://localhost:8000/ui** — a simple web page (also live at
+https://mall-mapper.onrender.com/ui) where you paste a mall name + website URL,
+watch the 5 agents' live activity feed (evidence collected, review decisions),
+and see the resulting floor map rendered as an SVG, color-coded by confidence
+with a hover tooltip — or drive it directly via curl:
 
 ```bash
 curl -X POST localhost:8000/run -H "Content-Type: application/json" \
-  -d '{"mall": "Mall of America", "floors": [1, 2, 3], "max_iterations": 6}'
+  -d '{"mall": "Mall of America", "base_url": "https://www.mallofamerica.com", "floors": [1, 2, 3], "max_iterations": 6}'
 curl localhost:8000/status/<job_id>
+curl localhost:8000/jobs/<job_id>/trail   # full agent activity timeline
 curl "localhost:8000/geojson/2?mall=Mall%20of%20America"
 ```
 
