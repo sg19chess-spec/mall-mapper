@@ -27,6 +27,14 @@ def entrance_point(x: float, y: float) -> dict:
     return {"type": "Point", "coordinates": list(pt.coords)[0]}
 
 
+def anchor_point(x: float, y: float) -> dict:
+    """A real, map-derived position for a major anchor tenant (Nordstrom,
+    JW Marriott, etc.) -- geometrically identical to entrance_point, kept
+    as a separate name for semantic clarity at call sites (agents/tools/
+    anchor_map.py is the source of these real coordinates)."""
+    return entrance_point(x, y)
+
+
 def geometry_confidence(source_has_official_floorplan: bool, ocr_confidence: float | None) -> float:
     """Geometry gets its own confidence, separate from identity confidence --
     the directory can be very sure a store exists; the polygon shape is

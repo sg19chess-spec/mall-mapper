@@ -58,7 +58,14 @@ def validate_feature(feature_type: str, geometry: dict | None, context: dict) ->
         if check_overlap(geometry, context.get("stores", [])):
             violations.append("overlaps another store polygon")
 
-    if "must_intersect" in rules:
+    if "must_intersect" in rules and geometry.get("type") == "Polygon":
+        # Polygon-only, like the other checks: a real anchor position is a
+        # labeled reference Point (see agents/tools/anchor_map.py), not a
+        # room-shaped unit, and it lives in the map's own real coordinate
+        # space rather than the synthetic grid's -- it was never going to
+        # geometrically "touch" the synthetic corridor line, so without
+        # this guard every anchor-matched store would incorrectly fail
+        # this check regardless of how real its position actually is.
         corridors = context.get("corridors", [])
         if corridors and not check_intersects_any(geometry, corridors):
             violations.append("does not intersect any corridor")

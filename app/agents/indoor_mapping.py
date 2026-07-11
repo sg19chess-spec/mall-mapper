@@ -12,12 +12,21 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from rapidfuzz import fuzz, process
+
 from app.agents.base import Agent
 from app.agents.tools import geometry as geom_tools
 from app.agents.tools.normalizer import normalize
 from app.schemas import FeatureType, GeometryFeature, GeometryType, IndoorFeature
 
 CHANGE_TOLERANCE_FIELDS = ("unit",)
+
+# Real anchor positions are extracted from the mall's own map (see
+# agents/tools/anchor_map.py) -- a real coordinate is worth a lot more
+# confidence than the synthetic placeholder grid, hence the much higher
+# base score here vs. geom_tools.geometry_confidence()'s synthetic-mode 0.35.
+ANCHOR_GEOMETRY_CONFIDENCE = 0.9
+ANCHOR_NAME_MATCH_THRESHOLD = 80
 
 
 def _now():
@@ -70,11 +79,22 @@ class IndoorMappingAgent(Agent):
             "floor": floor,
         }
 
+    @staticmethod
+    def _match_anchor(raw_name: str, anchors: list[dict]) -> dict | None:
+        if not anchors:
+            return None
+        names = [a["name"] for a in anchors]
+        result = process.extractOne(raw_name, names, scorer=fuzz.ratio)
+        if result and result[1] >= ANCHOR_NAME_MATCH_THRESHOLD:
+            return anchors[result[2]]
+        return None
+
     def run(self, mall: str, floor: int, validation_result: dict, floorplan_evidence: dict | None) -> list[dict]:
         entities = validation_result["entities"]
         grid = None
         ocr_confidence = None
         has_official_floorplan = False
+        anchor_data = None
         if floorplan_evidence:
             obs = floorplan_evidence["observation"]
             grid = obs.get("synthetic_grid")
@@ -82,16 +102,16 @@ class IndoorMappingAgent(Agent):
             has_official_floorplan = bool(ocr_results)
             if ocr_results:
                 ocr_confidence = sum(r["confidence"] for r in ocr_results) / len(ocr_results)
+            anchor_data = obs.get("anchor_positions")
 
+        anchors = anchor_data["anchors"] if anchor_data else []
+        view_box = anchor_data["view_box"] if anchor_data else None
         slots = grid["store_slots"] if grid else []
         features: list[dict] = []
+        synthetic_slot_index = 0  # separate counter -- anchor-matched entities don't consume a synthetic slot
 
-        for i, (key, entity) in enumerate(entities.items()):
+        for key, entity in entities.items():
             feature_id = self._feature_id(mall, floor, key)
-            geometry = None
-            if i < len(slots):
-                geometry = geom_tools.store_polygon_from_slot(slots[i])
-
             props = {
                 "name": entity["raw_name"],
                 "category": entity["fields"].get("category", {}).get("value"),
@@ -101,7 +121,23 @@ class IndoorMappingAgent(Agent):
             confidence_by_attribute = {"name": entity["existence_confidence"]}
             for field, data in entity["fields"].items():
                 confidence_by_attribute[field] = data["confidence"]
-            confidence_by_attribute["geometry"] = geom_tools.geometry_confidence(has_official_floorplan, ocr_confidence)
+
+            matched_anchor = self._match_anchor(entity["raw_name"], anchors)
+            if matched_anchor:
+                geometry = geom_tools.anchor_point(matched_anchor["x"], matched_anchor["y"])
+                confidence_by_attribute["geometry"] = ANCHOR_GEOMETRY_CONFIDENCE
+                props["geometry_source"] = "real_anchor"
+                props["anchor_view_box"] = view_box
+                props["matched_anchor_name"] = matched_anchor["name"]
+            elif synthetic_slot_index < len(slots):
+                geometry = geom_tools.store_polygon_from_slot(slots[synthetic_slot_index])
+                synthetic_slot_index += 1
+                confidence_by_attribute["geometry"] = geom_tools.geometry_confidence(has_official_floorplan, ocr_confidence)
+                props["geometry_source"] = "synthetic_placeholder"
+            else:
+                geometry = None
+                confidence_by_attribute["geometry"] = geom_tools.geometry_confidence(has_official_floorplan, ocr_confidence)
+                props["geometry_source"] = "synthetic_placeholder"
 
             previous = self._previous_version(feature_id)
             change_reason = self._detect_change(previous, props)

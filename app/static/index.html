@@ -6,9 +6,10 @@
 <title>Indoor Mall Mapping — Live Agent Run</title>
 <style>
   :root {
-    --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --border: #2a2f3a;
-    --text: #e6e9ef; --text-dim: #9aa3b2; --accent: #5b9dff;
-    --green: #3ecf8e; --yellow: #e8b339; --red: #ef5b5b; --gray: #6b7280;
+    --bg: #f5f6f8; --panel: #ffffff; --panel-2: #eef0f3; --border: #dde1e6;
+    --text: #1a1d24; --text-dim: #667085; --accent: #2563eb; --accent-soft: #eaf1ff;
+    --green: #16a34a; --green-soft: #e8f8ee; --yellow: #b45309; --yellow-soft: #fef3e2;
+    --red: #dc2626; --red-soft: #fdecec; --gray: #9aa1ac;
   }
   * { box-sizing: border-box; }
   body {
@@ -35,7 +36,7 @@
   .field input:focus { outline: none; border-color: var(--accent); }
   #mallUrl { min-width: 320px; }
   button {
-    background: var(--accent); color: #08121f; border: none; padding: 9px 20px;
+    background: var(--accent); color: #ffffff; border: none; padding: 9px 20px;
     border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;
   }
   button:disabled { background: var(--gray); cursor: not-allowed; }
@@ -46,9 +47,9 @@
     border-bottom: 1px solid var(--border); font-size: 13px; min-height: 20px;
   }
   .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
-  .badge.running { background: #2b3a5c; color: #8fb4ff; }
-  .badge.completed { background: #133b2c; color: var(--green); }
-  .badge.failed { background: #3b1616; color: var(--red); }
+  .badge.running { background: var(--accent-soft); color: var(--accent); }
+  .badge.completed { background: var(--green-soft); color: var(--green); }
+  .badge.failed { background: var(--red-soft); color: var(--red); }
   .status-bar .dim { color: var(--text-dim); }
 
   .pipeline {
@@ -61,7 +62,7 @@
     transition: border-color .3s ease, background .3s ease, box-shadow .3s ease;
   }
   .stage-icon {
-    width: 20px; height: 20px; border-radius: 50%; background: var(--gray); color: #08121f;
+    width: 20px; height: 20px; border-radius: 50%; background: var(--gray); color: #ffffff;
     font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0;
   }
   .stage-label { font-size: 12px; color: var(--text-dim); font-weight: 600; }
@@ -70,14 +71,14 @@
   .stage.done .stage-icon { background: var(--green); }
   .stage.done .stage-label { color: var(--text); }
   .stage.active {
-    border-color: var(--accent); background: #16233d;
-    box-shadow: 0 0 0 3px rgba(91,157,255,0.15); animation: stagePulse 1.6s ease-in-out infinite;
+    border-color: var(--accent); background: var(--accent-soft);
+    box-shadow: 0 0 0 3px rgba(37,99,235,0.15); animation: stagePulse 1.6s ease-in-out infinite;
   }
   .stage.active .stage-icon { background: var(--accent); }
   .stage.active .stage-label { color: var(--text); }
   @keyframes stagePulse {
-    0%, 100% { box-shadow: 0 0 0 3px rgba(91,157,255,0.15); }
-    50% { box-shadow: 0 0 0 6px rgba(91,157,255,0.04); }
+    0%, 100% { box-shadow: 0 0 0 3px rgba(37,99,235,0.15); }
+    50% { box-shadow: 0 0 0 6px rgba(37,99,235,0.04); }
   }
   .stage-arrow { color: var(--text-dim); font-size: 14px; }
 
@@ -104,19 +105,19 @@
     margin: 0; padding: 14px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 
   #feed { flex: 1; overflow-y: auto; padding: 8px 0; min-height: 0; }
-  .feed-item { padding: 8px 20px; border-bottom: 1px solid #1a1d25; font-size: 12.5px; line-height: 1.5; }
+  .feed-item { padding: 8px 20px; border-bottom: 1px solid var(--border); font-size: 12.5px; line-height: 1.5; }
   .feed-item .tag {
     display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 10px; font-weight: 700;
     text-transform: uppercase; margin-right: 8px; vertical-align: middle;
   }
-  .tag.evidence_collected { background: #1e3a5c; color: #7fb8ff; }
-  .tag.review_decision.pass { background: #133b2c; color: var(--green); }
-  .tag.review_decision.retry { background: #4a3410; color: var(--yellow); }
-  .tag.review_decision.human_review { background: #3b1616; color: var(--red); }
-  .tag.job_started, .tag.job_completed { background: #2a2f3a; color: var(--text-dim); }
-  .tag.export_failed { background: #3b1616; color: var(--red); }
-  .tag.validation_summary { background: #3a2a5c; color: #b89bff; }
-  .tag.mapping_summary { background: #2a4a3a; color: #6bd9a8; }
+  .tag.evidence_collected { background: var(--accent-soft); color: var(--accent); }
+  .tag.review_decision.pass { background: var(--green-soft); color: var(--green); }
+  .tag.review_decision.retry { background: var(--yellow-soft); color: var(--yellow); }
+  .tag.review_decision.human_review { background: var(--red-soft); color: var(--red); }
+  .tag.job_started, .tag.job_completed { background: var(--panel-2); color: var(--text-dim); }
+  .tag.export_failed { background: var(--red-soft); color: var(--red); }
+  .tag.validation_summary { background: #f1eaff; color: #7c3aed; }
+  .tag.mapping_summary { background: #e6fbf5; color: #0d9488; }
   .feed-item .meta { color: var(--text-dim); }
   .feed-empty { padding: 24px 20px; color: var(--text-dim); font-style: italic; }
 
@@ -144,19 +145,33 @@
   .floor-tabs button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); padding: 6px 14px; font-weight: 500; }
   .floor-tabs button.active { background: var(--accent); color: #08121f; border-color: var(--accent); }
 
-  #mapWrap { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-  svg { display: block; width: 100%; height: auto; }
+  .map-note {
+    display: flex; align-items: center; gap: 8px; background: var(--yellow-soft); color: var(--yellow);
+    border: 1px solid var(--yellow); border-radius: 6px; padding: 8px 12px; font-size: 12px; margin-bottom: 12px;
+  }
+  .map-legend { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 10px; font-size: 11.5px; color: var(--text-dim); }
+  .map-legend .swatch { display: inline-flex; align-items: center; gap: 6px; }
+  .map-legend .swatch svg { width: 22px; height: 16px; overflow: visible; }
+  .map-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-bottom: 16px; }
+  .map-panel h3 {
+    margin: 0; padding: 10px 14px; font-size: 12px; font-weight: 700; color: var(--text-dim);
+    border-bottom: 1px solid var(--border); text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  #mapWrap svg { display: block; width: 100%; height: auto; }
   .store-rect { stroke-width: 1.5; cursor: pointer; }
-  .store-rect.high { fill: rgba(62,207,142,0.25); stroke: var(--green); }
-  .store-rect.mid { fill: rgba(232,179,57,0.25); stroke: var(--yellow); }
-  .store-rect.low { fill: rgba(239,91,91,0.25); stroke: var(--red); }
+  .store-rect.high { fill: rgba(22,163,74,0.14); stroke: var(--green); }
+  .store-rect.mid { fill: rgba(180,83,9,0.14); stroke: var(--yellow); }
+  .store-rect.low { fill: rgba(220,38,38,0.14); stroke: var(--red); }
+  .store-rect.synthetic { stroke-dasharray: 4 3; }
+  .anchor-dot { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; cursor: pointer; }
+  .anchor-label { fill: var(--text); font-size: 11px; font-weight: 600; pointer-events: none; }
   .store-label { fill: var(--text); font-size: 11px; pointer-events: none; }
   .empty-note { color: var(--text-dim); padding: 40px; text-align: center; }
 
   #tooltip {
     position: fixed; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
     padding: 10px 12px; font-size: 12px; pointer-events: none; display: none; max-width: 280px; z-index: 10;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
   }
   #tooltip .t-name { font-weight: 700; margin-bottom: 6px; }
   #tooltip .t-row { display: flex; justify-content: space-between; gap: 12px; color: var(--text-dim); }
@@ -238,6 +253,7 @@
     <div id="metricsWrap"></div>
     <div id="mapSection" style="display:none">
       <div class="floor-tabs" id="floorTabs"></div>
+      <div id="mapNote"></div>
       <div id="mapWrap"></div>
     </div>
   </section>
@@ -260,7 +276,9 @@ const talliesEl = document.getElementById("tallies");
 const metricsWrap = document.getElementById("metricsWrap");
 const mapSection = document.getElementById("mapSection");
 const floorTabs = document.getElementById("floorTabs");
+const mapNote = document.getElementById("mapNote");
 const mapWrap = document.getElementById("mapWrap");
+let lastReport = null;
 const tooltip = document.getElementById("tooltip");
 const runBtn = document.getElementById("runBtn");
 
@@ -301,6 +319,8 @@ document.getElementById("runForm").addEventListener("submit", async (e) => {
 function resetUI() {
   feedEl.innerHTML = "";
   metricsWrap.innerHTML = "";
+  mapNote.innerHTML = "";
+  lastReport = null;
   mapSection.style.display = "none";
   progressWrap.style.display = "none";
   talliesEl.style.display = "none";
@@ -337,6 +357,7 @@ async function pollStatus() {
     runBtn.disabled = false;
     runBtn.textContent = "Run";
     if (job.status === "completed" && job.report) {
+      lastReport = job.report;
       renderMetrics(job.report);
       await renderMaps(job.report.floors || floorsCache, job.mall);
     } else if (job.report && job.report.error) {
@@ -499,6 +520,12 @@ async function renderMaps(floors, mall) {
       loadFloorMap(parseInt(btn.dataset.floor), mall);
     });
   });
+
+  const pending = lastReport && lastReport.human_review_queue_size;
+  mapNote.innerHTML = pending
+    ? `<div class="map-note">⚠ Only <b>&nbsp;published&nbsp;</b> stores appear below — <b>${pending}</b> store${pending === 1 ? "" : "s"} across this run ${pending === 1 ? "is" : "are"} still waiting on human review and won't show on the map until approved. See the Publication Review decisions in the activity feed for why.</div>`
+    : "";
+
   await loadFloorMap(floors[0], mall);
 }
 
@@ -514,12 +541,67 @@ async function loadFloorMap(floor, mall) {
   }
 }
 
+// Real anchor positions (Point geometry, extracted from the mall's own live
+// map -- see agents/tools/anchor_map.py) and synthetic placeholder stores
+// (Polygon geometry, laid out along a synthetic corridor grid) live in two
+// completely different coordinate spaces -- one is the mall's real map
+// pixel space, the other is an arbitrary grid we invented because most
+// small stores have no publicly extractable position at all. Merging them
+// into one continuous SVG would silently imply a precision neither space
+// actually has, so they're rendered as two clearly labeled panels instead,
+// each honest about what it is.
 function drawFloor(geojson) {
-  const stores = (geojson.features || []).filter(f => f.geometry && f.geometry.type === "Polygon");
-  if (!stores.length) {
+  const features = geojson.features || [];
+  const anchors = features.filter(f => f.geometry && f.geometry.type === "Point");
+  const synthetic = features.filter(f => f.geometry && f.geometry.type === "Polygon");
+  const corridor = features.find(f => f.geometry && f.geometry.type === "LineString");
+
+  if (!anchors.length && !synthetic.length) {
     mapWrap.innerHTML = `<div class="empty-note">No store geometry published on this floor yet.</div>`;
     return;
   }
+
+  const legend = `<div class="map-legend">
+    <span class="swatch"><svg><circle cx="11" cy="8" r="6" class="anchor-dot"></circle></svg> Verified position (from the mall's live map)</span>
+    <span class="swatch"><svg><rect x="1" y="1" width="20" height="14" rx="2" class="store-rect high synthetic"></rect></svg> Approximate placeholder (exact position not publicly available)</span>
+  </div>`;
+
+  let html = legend;
+  if (anchors.length) html += `<div class="map-panel"><h3>Anchor stores — real positions</h3><div>${renderAnchorSvg(anchors)}</div></div>`;
+  if (synthetic.length) html += `<div class="map-panel"><h3>Other stores — approximate layout</h3><div>${renderSyntheticSvg(synthetic, corridor)}</div></div>`;
+  mapWrap.innerHTML = html;
+
+  mapWrap.querySelectorAll(".store-rect, .anchor-dot").forEach(el => {
+    el.addEventListener("mousemove", (e) => showTooltip(e, el));
+    el.addEventListener("mouseleave", hideTooltip);
+  });
+}
+
+function renderAnchorSvg(anchors) {
+  const vb = anchors[0].properties.anchor_view_box || null;
+  let minX, minY, w, h;
+  if (vb) {
+    [minX, minY, w, h] = vb;
+  } else {
+    const xs = anchors.map(f => f.geometry.coordinates[0]);
+    const ys = anchors.map(f => f.geometry.coordinates[1]);
+    const pad = 60;
+    minX = Math.min(...xs) - pad; minY = Math.min(...ys) - pad;
+    w = Math.max(...xs) - minX + pad; h = Math.max(...ys) - minY + pad;
+  }
+  let svg = `<svg viewBox="${minX} ${minY} ${w} ${h}" preserveAspectRatio="xMidYMid meet">`;
+  for (const f of anchors) {
+    const [x, y] = f.geometry.coordinates;
+    const conf = f.properties.confidence_by_attribute || {};
+    const r = Math.max(w, h) * 0.012;
+    svg += `<circle class="anchor-dot" cx="${x}" cy="${y}" r="${r}" data-name="${escapeAttr(f.properties.name)}" data-conf='${escapeAttr(JSON.stringify(conf))}'></circle>`;
+    svg += `<text class="anchor-label" x="${x}" y="${y - r - 4}" text-anchor="middle">${escapeHtml(truncate(f.properties.name, 20))}</text>`;
+  }
+  svg += `</svg>`;
+  return svg;
+}
+
+function renderSyntheticSvg(stores, corridor) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const f of stores) {
     for (const [x, y] of f.geometry.coordinates[0]) {
@@ -532,6 +614,10 @@ function drawFloor(geojson) {
   const w = maxX - minX, h = maxY - minY;
 
   let svg = `<svg viewBox="${minX} ${minY} ${w} ${h}" preserveAspectRatio="xMidYMid meet">`;
+  if (corridor) {
+    const pts = corridor.geometry.coordinates.map(([x, y]) => `${x},${y}`).join(" ");
+    svg += `<polyline points="${pts}" fill="none" stroke="var(--border)" stroke-width="3"></polyline>`;
+  }
   for (const f of stores) {
     const coords = f.geometry.coordinates[0];
     const points = coords.map(([x, y]) => `${x},${y}`).join(" ");
@@ -541,16 +627,11 @@ function drawFloor(geojson) {
     const tier = minConf >= 0.7 ? "high" : minConf >= 0.5 ? "mid" : "low";
     const cx = coords.reduce((s, c) => s + c[0], 0) / coords.length;
     const cy = coords.reduce((s, c) => s + c[1], 0) / coords.length;
-    svg += `<polygon class="store-rect ${tier}" points="${points}" data-name="${escapeAttr(f.properties.name)}" data-conf='${escapeAttr(JSON.stringify(conf))}'></polygon>`;
+    svg += `<polygon class="store-rect synthetic ${tier}" points="${points}" data-name="${escapeAttr(f.properties.name)}" data-conf='${escapeAttr(JSON.stringify(conf))}'></polygon>`;
     svg += `<text class="store-label" x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle">${escapeHtml(truncate(f.properties.name, 12))}</text>`;
   }
   svg += `</svg>`;
-  mapWrap.innerHTML = svg;
-
-  mapWrap.querySelectorAll(".store-rect").forEach(el => {
-    el.addEventListener("mousemove", (e) => showTooltip(e, el));
-    el.addEventListener("mouseleave", hideTooltip);
-  });
+  return svg;
 }
 
 function showTooltip(e, el) {

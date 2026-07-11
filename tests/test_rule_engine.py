@@ -18,6 +18,10 @@ def line(x_start: float, x_end: float, y: float) -> dict:
     return {"type": "LineString", "coordinates": [(x_start, y), (x_end, y)]}
 
 
+def point(x: float, y: float) -> dict:
+    return {"type": "Point", "coordinates": [x, y]}
+
+
 EMPTY_CONTEXT = {"stores": [], "corridors": [], "floor_boundary": None}
 
 
@@ -88,6 +92,30 @@ def test_skips_corridor_check_when_no_corridors_supplied():
     # explicit corridor that fails to intersect is
     geom = polygon(0, 0, 60, 60)
     violations = validate_feature("store", geom, EMPTY_CONTEXT)
+    assert violations == []
+
+
+def test_point_geometry_skips_corridor_intersect_check():
+    # a real anchor position (see agents/tools/anchor_map.py) is a Point in
+    # the map's own real coordinate space, not a Polygon in the synthetic
+    # grid's space -- it will never geometrically "touch" a synthetic
+    # corridor line, so must_intersect must not apply to it at all
+    # (regression test for the missing Polygon-type guard on this check)
+    geom = point(800, 1000)  # real anchor coordinate space
+    far_corridor = line(0, 500, 200)  # synthetic grid coordinate space
+    violations = validate_feature("store", geom, {**EMPTY_CONTEXT, "corridors": [far_corridor]})
+    assert "does not intersect any corridor" not in violations
+    assert violations == []
+
+
+def test_point_geometry_skips_overlap_and_centroid_checks_too():
+    # same reasoning as above, for the other two Polygon-only checks
+    geom = point(800, 1000)
+    other_store = polygon(700, 900, 900, 1100)  # would "contain" the point if overlap check ran
+    boundary = polygon(0, 0, 200, 200)  # far from the point if centroid check ran
+    violations = validate_feature("store", geom, {
+        "stores": [other_store], "corridors": [], "floor_boundary": boundary,
+    })
     assert violations == []
 
 

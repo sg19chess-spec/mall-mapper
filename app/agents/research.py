@@ -29,7 +29,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from app.agents.base import Agent
-from app.agents.tools import floorplan, ocr, social, web, youtube
+from app.agents.tools import anchor_map, floorplan, ocr, social, web, youtube
 from app.agents.tools.normalizer import normalize
 from app.schemas import Evidence, SourceType, Subtask, TaskType
 
@@ -94,12 +94,31 @@ class ResearchAgent(Agent):
             ocr_results = []
             grid = floorplan.synthetic_floorplan_grid(subtask.floor, store_count=len(stores))
 
+        # Real positions for the handful of major anchor tenants (Nordstrom,
+        # JW Marriott, Nickelodeon Universe, etc.), extracted from the
+        # mall's own live map. Confirmed live: individual small stores are
+        # NOT extractable this way (or via OCR) -- they're rendered by a
+        # proprietary canvas/WebGL map engine with no accessible position
+        # data -- so this only ever covers anchors; everything else still
+        # uses the synthetic grid above. See anchor_map.py's docstring.
+        # Skipped entirely when the directory fetch already fell back to
+        # SAMPLE_DIRECTORY: that means base_url itself was unreachable via
+        # both static and Playwright-rendered fetches, so a second
+        # Playwright round-trip here is guaranteed to fail too -- it would
+        # only add another ~30s of dead time (as seen live: this addition
+        # pushed two existing polling-timeout tests from "completed" to
+        # "still running") for a result we already know.
+        source_is_live = bool(stores) and stores[0].get("_source_is_live", False)
+        anchor_positions = anchor_map.fetch_anchor_positions(self.base_url, subtask.floor) if source_is_live else None
+
         evidence.append(
             Evidence(
                 source_type=SourceType.FLOORPLAN,
                 source_url=f"{self.base_url.rstrip('/')}/directory/map/level-{subtask.floor}",
                 entity_raw=f"{FLOORPLAN_ENTITY_KEY}:{subtask.floor}",
-                observation={"ocr_results": ocr_results, "synthetic_grid": grid},
+                observation={
+                    "ocr_results": ocr_results, "synthetic_grid": grid, "anchor_positions": anchor_positions,
+                },
                 published_date=_now(),
             )
         )
