@@ -19,6 +19,7 @@ BASE_URL = os.environ.get("MALL_BASE_URL", "https://www.mallofamerica.com")
 
 class RunRequest(BaseModel):
     mall: str = "Mall of America"
+    base_url: str | None = None  # e.g. "https://www.mallofamerica.com" -- defaults to MALL_BASE_URL env var
     floors: list[int] = [1]
     max_iterations: int = 6
 
@@ -28,7 +29,7 @@ def run_job(req: RunRequest):
     job_id = str(uuid4())
     config = RunConfig(mall=req.mall, floors=req.floors, max_iterations=req.max_iterations)
     store = get_store()
-    orchestrator = Orchestrator(store, BASE_URL)
+    orchestrator = Orchestrator(store, req.base_url or BASE_URL)
 
     def _worker():
         try:
@@ -121,6 +122,16 @@ def get_audit(feature_id: str, job_id: str):
     store = get_store()
     trail = store.get_audit_trail(job_id)
     return [row for row in trail if row.get("feature_id") == feature_id]
+
+
+@router.get("/jobs/{job_id}/trail")
+def get_job_trail(job_id: str):
+    """Full agent-activity timeline for a job -- every evidence-collected
+    and review-decision event across all features/floors, in order. Powers
+    the live activity feed in the /ui frontend; unlike GET /audit/{feature_id}
+    this isn't filtered down to one feature."""
+    store = get_store()
+    return store.get_audit_trail(job_id)
 
 
 @router.post("/rerun/{feature_id}")

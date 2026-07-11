@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Indoor Mall Mapping — Live Agent Run</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel-2: #1e222b; --border: #2a2f3a;
+    --text: #e6e9ef; --text-dim: #9aa3b2; --accent: #5b9dff;
+    --green: #3ecf8e; --yellow: #e8b339; --red: #ef5b5b; --gray: #6b7280;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); font-size: 14px;
+  }
+  header {
+    padding: 20px 28px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header p { margin: 0; color: var(--text-dim); font-size: 13px; }
+
+  form {
+    display: flex; gap: 10px; padding: 16px 28px; flex-wrap: wrap; align-items: flex-end;
+    border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .field input {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    padding: 8px 10px; border-radius: 6px; font-size: 13px; min-width: 160px;
+  }
+  .field input:focus { outline: none; border-color: var(--accent); }
+  #mallUrl { min-width: 320px; }
+  button {
+    background: var(--accent); color: #08121f; border: none; padding: 9px 20px;
+    border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;
+  }
+  button:disabled { background: var(--gray); cursor: not-allowed; }
+  button:hover:not(:disabled) { filter: brightness(1.08); }
+
+  .status-bar {
+    padding: 10px 28px; display: flex; align-items: center; gap: 16px;
+    border-bottom: 1px solid var(--border); font-size: 13px; min-height: 20px;
+  }
+  .badge { padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+  .badge.running { background: #2b3a5c; color: #8fb4ff; }
+  .badge.completed { background: #133b2c; color: var(--green); }
+  .badge.failed { background: #3b1616; color: var(--red); }
+  .status-bar .dim { color: var(--text-dim); }
+
+  main {
+    display: grid; grid-template-columns: 380px 1fr; grid-template-rows: 1fr;
+    gap: 0; height: calc(100vh - 160px);
+  }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; height: auto; } }
+
+  .panel { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim);
+    margin: 0; padding: 14px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+
+  #feed { flex: 1; overflow-y: auto; padding: 8px 0; min-height: 0; }
+  .feed-item { padding: 8px 20px; border-bottom: 1px solid #1a1d25; font-size: 12.5px; line-height: 1.5; }
+  .feed-item .tag {
+    display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 10px; font-weight: 700;
+    text-transform: uppercase; margin-right: 8px; vertical-align: middle;
+  }
+  .tag.evidence_collected { background: #1e3a5c; color: #7fb8ff; }
+  .tag.review_decision.pass { background: #133b2c; color: var(--green); }
+  .tag.review_decision.retry { background: #4a3410; color: var(--yellow); }
+  .tag.review_decision.human_review { background: #3b1616; color: var(--red); }
+  .tag.job_started, .tag.job_completed { background: #2a2f3a; color: var(--text-dim); }
+  .tag.export_failed { background: #3b1616; color: var(--red); }
+  .feed-item .meta { color: var(--text-dim); }
+  .feed-empty { padding: 24px 20px; color: var(--text-dim); font-style: italic; }
+
+  .results { padding: 20px 28px; overflow-y: auto; min-height: 0; }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 24px; }
+  .metric { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+  .metric .label { font-size: 11px; color: var(--text-dim); text-transform: uppercase; margin-bottom: 4px; }
+  .metric .value { font-size: 20px; font-weight: 700; }
+
+  .floor-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .floor-tabs button { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); padding: 6px 14px; font-weight: 500; }
+  .floor-tabs button.active { background: var(--accent); color: #08121f; border-color: var(--accent); }
+
+  #mapWrap { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  svg { display: block; width: 100%; height: auto; }
+  .store-rect { stroke-width: 1.5; cursor: pointer; }
+  .store-rect.high { fill: rgba(62,207,142,0.25); stroke: var(--green); }
+  .store-rect.mid { fill: rgba(232,179,57,0.25); stroke: var(--yellow); }
+  .store-rect.low { fill: rgba(239,91,91,0.25); stroke: var(--red); }
+  .store-label { fill: var(--text); font-size: 11px; pointer-events: none; }
+  .empty-note { color: var(--text-dim); padding: 40px; text-align: center; }
+
+  #tooltip {
+    position: fixed; background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-size: 12px; pointer-events: none; display: none; max-width: 280px; z-index: 10;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  #tooltip .t-name { font-weight: 700; margin-bottom: 6px; }
+  #tooltip .t-row { display: flex; justify-content: space-between; gap: 12px; color: var(--text-dim); }
+  #tooltip .t-row span:last-child { color: var(--text); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Indoor Mall Mapping</h1>
+  <p>Paste a mall's website, watch the 5 agents work, see the resulting floor map.</p>
+</header>
+
+<form id="runForm">
+  <div class="field">
+    <label for="mallName">Mall name</label>
+    <input id="mallName" value="Mall of America" required>
+  </div>
+  <div class="field">
+    <label for="mallUrl">Mall website</label>
+    <input id="mallUrl" placeholder="https://www.mallofamerica.com" value="https://www.mallofamerica.com" required>
+  </div>
+  <div class="field">
+    <label for="floors">Floors (comma-separated)</label>
+    <input id="floors" value="1,2" style="min-width:100px">
+  </div>
+  <div class="field">
+    <label for="maxIter">Max iterations</label>
+    <input id="maxIter" type="number" value="4" min="1" max="10" style="min-width:80px">
+  </div>
+  <button id="runBtn" type="submit">Run</button>
+</form>
+
+<div class="status-bar" id="statusBar">
+  <span class="dim">No run started yet.</span>
+</div>
+
+<main>
+  <section class="panel">
+    <h2>Agent activity</h2>
+    <div id="feed"><div class="feed-empty">Agent activity will appear here once a run starts.</div></div>
+  </section>
+
+  <section class="results">
+    <div id="metricsWrap"></div>
+    <div id="mapSection" style="display:none">
+      <div class="floor-tabs" id="floorTabs"></div>
+      <div id="mapWrap"></div>
+    </div>
+  </section>
+</main>
+
+<div id="tooltip"></div>
+
+<script>
+const API = ""; // same origin
+let pollTimer = null, trailTimer = null, lastTrailLen = 0, currentJobId = null, floorsCache = [];
+
+const feedEl = document.getElementById("feed");
+const statusBar = document.getElementById("statusBar");
+const metricsWrap = document.getElementById("metricsWrap");
+const mapSection = document.getElementById("mapSection");
+const floorTabs = document.getElementById("floorTabs");
+const mapWrap = document.getElementById("mapWrap");
+const tooltip = document.getElementById("tooltip");
+const runBtn = document.getElementById("runBtn");
+
+document.getElementById("runForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const mall = document.getElementById("mallName").value.trim();
+  const base_url = document.getElementById("mallUrl").value.trim();
+  const floors = document.getElementById("floors").value.split(",").map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+  const max_iterations = parseInt(document.getElementById("maxIter").value) || 4;
+
+  resetUI();
+  runBtn.disabled = true;
+  runBtn.textContent = "Running…";
+
+  try {
+    const resp = await fetch(`${API}/run`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mall, base_url, floors, max_iterations }),
+    });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "failed to start run");
+    currentJobId = data.job_id;
+    floorsCache = floors;
+    setStatusBar("running", `job ${currentJobId}`);
+    pollTimer = setInterval(pollStatus, 2500);
+    trailTimer = setInterval(pollTrail, 2000);
+    pollTrail();
+  } catch (err) {
+    setStatusBar("failed", err.message);
+    runBtn.disabled = false;
+    runBtn.textContent = "Run";
+  }
+});
+
+function resetUI() {
+  feedEl.innerHTML = "";
+  metricsWrap.innerHTML = "";
+  mapSection.style.display = "none";
+  lastTrailLen = 0;
+}
+
+function setStatusBar(status, extra) {
+  statusBar.innerHTML = `<span class="badge ${status}">${status}</span><span class="dim">${extra || ""}</span>`;
+}
+
+async function pollStatus() {
+  if (!currentJobId) return;
+  const resp = await fetch(`${API}/status/${currentJobId}`);
+  if (!resp.ok) return;
+  const job = await resp.json();
+  setStatusBar(job.status, `job ${job.job_id} · iteration ${job.iteration}`);
+
+  if (job.status === "completed" || job.status === "failed") {
+    clearInterval(pollTimer);
+    clearInterval(trailTimer);
+    pollTrail(); // final catch-up
+    runBtn.disabled = false;
+    runBtn.textContent = "Run";
+    if (job.status === "completed" && job.report) {
+      renderMetrics(job.report);
+      await renderMaps(job.report.floors || floorsCache, job.mall);
+    } else if (job.report && job.report.error) {
+      metricsWrap.innerHTML = `<div class="empty-note">Run failed: ${escapeHtml(job.report.error)}</div>`;
+    }
+  }
+}
+
+async function pollTrail() {
+  if (!currentJobId) return;
+  const resp = await fetch(`${API}/jobs/${currentJobId}/trail`);
+  if (!resp.ok) return;
+  const trail = await resp.json();
+  if (trail.length <= lastTrailLen) return;
+  const newItems = trail.slice(lastTrailLen);
+  lastTrailLen = trail.length;
+  if (feedEl.querySelector(".feed-empty")) feedEl.innerHTML = "";
+  for (const item of newItems) feedEl.insertAdjacentHTML("beforeend", renderFeedItem(item));
+  feedEl.scrollTop = feedEl.scrollHeight;
+}
+
+function renderFeedItem(item) {
+  const detail = item.detail || {};
+  let tagClass = item.event, label = "";
+  if (item.event === "evidence_collected") {
+    label = `${escapeHtml(detail.entity || "")} — <span class="meta">${escapeHtml(detail.source_type || "")} evidence, floor ${detail.floor}</span>`;
+  } else if (item.event === "review_decision") {
+    tagClass = `review_decision ${detail.recommendation || ""}`;
+    label = `${escapeHtml((item.feature_id || "").split(":").pop())} → <b>${escapeHtml(detail.recommendation || "")}</b> — <span class="meta">${escapeHtml(detail.reason || "")}</span>`;
+  } else if (item.event === "job_started") {
+    label = `Task Intake: run started for <b>${escapeHtml(detail.mall || "")}</b>, floors ${escapeHtml(JSON.stringify(detail.floors || []))}`;
+  } else if (item.event === "job_completed") {
+    label = "Job completed";
+  } else {
+    label = escapeHtml(JSON.stringify(detail));
+  }
+  return `<div class="feed-item"><span class="tag ${tagClass}">${escapeHtml(item.event)}</span>${label} <span class="meta">· iter ${item.iteration}</span></div>`;
+}
+
+function renderMetrics(report) {
+  const acc = report.accuracy || {};
+  const da = acc.directory_agreement || {};
+  const rows = [
+    ["Ground truth", acc.ground_truth_count],
+    ["Published", acc.published_count],
+    ["Recall", fmtPct(da.recall)],
+    ["Precision", fmtPct(da.precision)],
+    ["Floor accuracy", fmtPct(da.floor_accuracy)],
+    ["Category accuracy", fmtPct(da.category_accuracy)],
+    ["Evidence agreement", fmtPct(acc.evidence_agreement_score)],
+    ["Geometry validity", fmtPct(acc.geometry_validity_rate)],
+    ["Needs human review", report.human_review_queue_size],
+    ["Iterations run", report.iterations_run],
+  ];
+  metricsWrap.innerHTML = `<div class="metrics">${rows.map(([label, value]) =>
+    `<div class="metric"><div class="label">${label}</div><div class="value">${value ?? "—"}</div></div>`
+  ).join("")}</div>`;
+}
+
+function fmtPct(v) { return v == null ? "—" : Math.round(v * 100) + "%"; }
+
+async function renderMaps(floors, mall) {
+  if (!floors || !floors.length) return;
+  mapSection.style.display = "block";
+  floorTabs.innerHTML = floors.map((f, i) =>
+    `<button data-floor="${f}" class="${i === 0 ? "active" : ""}">Floor ${f}</button>`
+  ).join("");
+  floorTabs.querySelectorAll("button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      floorTabs.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      loadFloorMap(parseInt(btn.dataset.floor), mall);
+    });
+  });
+  await loadFloorMap(floors[0], mall);
+}
+
+async function loadFloorMap(floor, mall) {
+  mapWrap.innerHTML = `<div class="empty-note">Loading floor ${floor}…</div>`;
+  try {
+    const resp = await fetch(`${API}/geojson/${floor}?mall=${encodeURIComponent(mall)}`);
+    if (!resp.ok) { mapWrap.innerHTML = `<div class="empty-note">No published features for floor ${floor} yet.</div>`; return; }
+    const geo = await resp.json();
+    drawFloor(geo);
+  } catch (err) {
+    mapWrap.innerHTML = `<div class="empty-note">Failed to load floor ${floor}.</div>`;
+  }
+}
+
+function drawFloor(geojson) {
+  const stores = (geojson.features || []).filter(f => f.geometry && f.geometry.type === "Polygon");
+  if (!stores.length) {
+    mapWrap.innerHTML = `<div class="empty-note">No store geometry published on this floor yet.</div>`;
+    return;
+  }
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const f of stores) {
+    for (const [x, y] of f.geometry.coordinates[0]) {
+      minX = Math.min(minX, x); minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+    }
+  }
+  const pad = 40;
+  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+  const w = maxX - minX, h = maxY - minY;
+
+  let svg = `<svg viewBox="${minX} ${minY} ${w} ${h}" preserveAspectRatio="xMidYMid meet">`;
+  for (const f of stores) {
+    const coords = f.geometry.coordinates[0];
+    const points = coords.map(([x, y]) => `${x},${y}`).join(" ");
+    const conf = f.properties.confidence_by_attribute || {};
+    const identityVals = Object.entries(conf).filter(([k]) => k !== "geometry").map(([, v]) => v);
+    const minConf = identityVals.length ? Math.min(...identityVals) : 0;
+    const tier = minConf >= 0.7 ? "high" : minConf >= 0.5 ? "mid" : "low";
+    const cx = coords.reduce((s, c) => s + c[0], 0) / coords.length;
+    const cy = coords.reduce((s, c) => s + c[1], 0) / coords.length;
+    svg += `<polygon class="store-rect ${tier}" points="${points}" data-name="${escapeAttr(f.properties.name)}" data-conf='${escapeAttr(JSON.stringify(conf))}'></polygon>`;
+    svg += `<text class="store-label" x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle">${escapeHtml(truncate(f.properties.name, 12))}</text>`;
+  }
+  svg += `</svg>`;
+  mapWrap.innerHTML = svg;
+
+  mapWrap.querySelectorAll(".store-rect").forEach(el => {
+    el.addEventListener("mousemove", (e) => showTooltip(e, el));
+    el.addEventListener("mouseleave", hideTooltip);
+  });
+}
+
+function showTooltip(e, el) {
+  const name = el.dataset.name;
+  const conf = JSON.parse(el.dataset.conf || "{}");
+  const rows = Object.entries(conf).map(([k, v]) => `<div class="t-row"><span>${k}</span><span>${Math.round(v * 100)}%</span></div>`).join("");
+  tooltip.innerHTML = `<div class="t-name">${escapeHtml(name)}</div>${rows}`;
+  tooltip.style.display = "block";
+  tooltip.style.left = (e.clientX + 14) + "px";
+  tooltip.style.top = (e.clientY + 14) + "px";
+}
+function hideTooltip() { tooltip.style.display = "none"; }
+
+function truncate(s, n) { return s && s.length > n ? s.slice(0, n - 1) + "…" : s; }
+function escapeHtml(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function escapeAttr(s) { return escapeHtml(s).replace(/`/g, "&#96;"); }
+</script>
+
+</body>
+</html>
