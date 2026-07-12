@@ -1,12 +1,13 @@
-"""Tests for the Indoor Mapping Agent's real-anchor vs synthetic-placeholder
-geometry selection (app/agents/indoor_mapping.py).
+"""Tests for the Indoor Mapping Agent's real-position-only geometry
+selection (app/agents/indoor_mapping.py).
 
-For major anchor tenants (Nordstrom, JW Marriott, etc.) the mall's own live
-map exposes real coordinates (see agents/tools/anchor_map.py); everything
-else still falls back to the synthetic corridor-grid placeholder. These
-tests exercise IndoorMappingAgent.run() as a pure function of its inputs
--- no store/network dependency, using a minimal fake store that just
-reports "no previous version" for every feature.
+A store is placed only from a real anchor-DOM match or a real OCR'd map
+label; otherwise it is left unplaced (geometry None) -- there is no
+synthetic fallback. Anchor landmarks are also emitted as their own
+reference features so the map always has a real backbone. These tests
+exercise IndoorMappingAgent as a pure function of its inputs -- no
+store/network dependency, using a minimal fake store that just reports
+"no previous version" for every feature.
 """
 from __future__ import annotations
 
@@ -172,3 +173,29 @@ def test_no_floorplan_evidence_at_all_leaves_store_unplaced():
     f = next(f for f in features if f["_canonical_key"] == "nordstrom")
     assert f["geometry"] is None
     assert f["properties"]["geometry_source"] == "unplaced"
+
+
+# ---------------------------------------------------------------------------
+# build_anchor_features: the map's real reference backbone
+# ---------------------------------------------------------------------------
+
+def test_build_anchor_features_emits_real_reference_points():
+    agent = IndoorMappingAgent(FakeStore())
+    floorplan_evidence = make_floorplan_evidence({**ANCHORS, "live": True})
+    feats = agent.build_anchor_features("Mall of America", 2, floorplan_evidence)
+
+    assert len(feats) == 2
+    nord = next(f for f in feats if f["properties"]["name"] == "Nordstrom")
+    assert nord["feature_type"] == "anchor"
+    assert nord["geometry"]["type"] == "Point"
+    assert tuple(nord["geometry"]["coordinates"]) == (850.5, 1020.0)
+    assert nord["properties"]["geometry_source"] == "real_anchor_reference"
+    assert nord["properties"]["anchor_view_box"] == ANCHORS["view_box"]
+    assert nord["properties"]["live_capture"] is True
+    assert nord["confidence_by_attribute"]["geometry"] == ANCHOR_GEOMETRY_CONFIDENCE
+
+
+def test_build_anchor_features_empty_without_anchor_data():
+    agent = IndoorMappingAgent(FakeStore())
+    assert agent.build_anchor_features("Mall of America", 2, None) == []
+    assert agent.build_anchor_features("Mall of America", 2, make_floorplan_evidence(None)) == []

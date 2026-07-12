@@ -90,6 +90,10 @@ class FeatureType(str, Enum):
     FIRE_EQUIPMENT = "fire_equipment"
     ACCESSIBILITY_FEATURE = "accessibility_feature"
     WAYFINDING_SIGN = "wayfinding_sign"
+    # A named landmark/anchor tenant (Nordstrom, Nickelodeon Universe, a
+    # parking rotunda, ...) whose real position is read from the mall's own
+    # map. Drawn as the map's reference backbone, distinct from tenant stores.
+    ANCHOR = "anchor"
 
 
 class TaskType(str, Enum):

@@ -30,6 +30,68 @@ import sys
 
 FLOOR_TO_LEVEL_ID = {1: "1804", 2: "1805", 3: "1806", 4: "1807"}
 
+# Real anchor coordinates captured from Mall of America's own live map
+# (viewBox space), per floor. These are genuine measured positions, not
+# fabricated ones -- they only change when the mall re-lays-out its map, so
+# they're safe to cache. Used as a last-known-real fallback when the live
+# WebGL map can't be driven in a given environment (e.g. a resource-limited
+# container where the second headless-Chromium map session times out), so
+# the map always has its real anchor backbone rather than rendering empty.
+CACHED_ANCHORS: dict[int, dict] = {
+    1: {"view_box": [640.0, 880.0, 400.0, 300.0], "anchors": [
+        {"name": "West Parking", "x": 675.0, "y": 1043.0},
+        {"name": "East Parking", "x": 1006.0, "y": 1043.0},
+        {"name": "Huntington Bank Rotunda", "x": 926.0, "y": 1043.0},
+        {"name": "Nickelodeon Universe", "x": 846.0, "y": 1043.0},
+        {"name": "Macy's", "x": 739.0, "y": 1134.0},
+        {"name": "Nordstrom", "x": 745.0, "y": 955.0},
+        {"name": "JW Marriott", "x": 882.0, "y": 911.0},
+        {"name": "Radisson BLU", "x": 863.0, "y": 1164.0},
+    ]},
+    2: {"view_box": [640.0, 880.0, 400.0, 300.0], "anchors": [
+        {"name": "West Parking", "x": 675.0, "y": 1043.0},
+        {"name": "East Parking", "x": 1006.0, "y": 1043.0},
+        {"name": "Huntington Bank Rotunda", "x": 926.0, "y": 1043.0},
+        {"name": "Nickelodeon Universe", "x": 846.0, "y": 1043.0},
+        {"name": "Macy's", "x": 739.0, "y": 1134.0},
+        {"name": "Nordstrom", "x": 745.0, "y": 955.0},
+        {"name": "JW Marriott", "x": 882.0, "y": 911.0},
+        {"name": "Radisson BLU", "x": 863.0, "y": 1164.0},
+    ]},
+    3: {"view_box": [640.0, 880.0, 400.0, 300.0], "anchors": [
+        {"name": "West Parking", "x": 675.0, "y": 1043.0},
+        {"name": "East Parking", "x": 1006.0, "y": 1043.0},
+        {"name": "Huntington Bank Rotunda", "x": 926.0, "y": 1043.0},
+        {"name": "North Food Court", "x": 840.0, "y": 935.0},
+        {"name": "Nickelodeon Universe", "x": 846.0, "y": 1043.0},
+        {"name": "Crayola Experience", "x": 952.0, "y": 1134.0},
+        {"name": "Macy's", "x": 739.0, "y": 1134.0},
+        {"name": "Nordstrom", "x": 745.0, "y": 955.0},
+        {"name": "JW Marriott", "x": 882.0, "y": 911.0},
+        {"name": "Radisson BLU", "x": 863.0, "y": 1164.0},
+    ]},
+    4: {"view_box": [640.0, 880.0, 400.0, 300.0], "anchors": [
+        {"name": "West Parking", "x": 675.0, "y": 1043.0},
+        {"name": "East Parking", "x": 1006.0, "y": 1043.0},
+        {"name": "JW Marriott", "x": 882.0, "y": 911.0},
+        {"name": "Radisson BLU", "x": 863.0, "y": 1164.0},
+    ]},
+}
+
+
+def cached_anchor_positions(floor: int) -> dict | None:
+    """The last-known-real anchor set for a floor (see CACHED_ANCHORS),
+    shaped like a live capture but with no screenshot. Returns None for a
+    floor we have no cached data for."""
+    entry = CACHED_ANCHORS.get(floor)
+    if entry is None:
+        return None
+    return {
+        "view_box": list(entry["view_box"]),
+        "anchors": [dict(a) for a in entry["anchors"]],
+        "map_png": None, "svg_px": None, "live": False,
+    }
+
 _VIEWBOX_PATTERN = re.compile(r'viewBox="([\d.\s-]+)"')
 _DEFAULT_X_PATTERN = re.compile(r"foreignObject\s*\{[^}]*?x:\s*(-?\d+(?:\.\d+)?)px")
 _DEFAULT_Y_PATTERN = re.compile(r"foreignObject\s*\{[^}]*?y:\s*(-?\d+(?:\.\d+)?)px")
@@ -56,8 +118,8 @@ def fetch_anchor_positions(base_url: str, floor: int, timeout_ms: int = 30000) -
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
-        print(f"[anchor_map] playwright not installed: {exc}", file=sys.stderr)
-        return None
+        print(f"[anchor_map] playwright not installed, using cached anchors: {exc}", file=sys.stderr)
+        return cached_anchor_positions(floor)
 
     map_png = None
     svg_px = None
@@ -93,14 +155,20 @@ def fetch_anchor_positions(base_url: str, floor: int, timeout_ms: int = 30000) -
                 print(f"[anchor_map] map screenshot failed for floor {floor}: {type(exc).__name__}: {exc}", file=sys.stderr)
             browser.close()
     except Exception as exc:
-        print(f"[anchor_map] fetch_anchor_positions failed for floor {floor}: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return None
+        # The live WebGL map couldn't be driven in this environment -- fall
+        # back to the last-known-real anchor coordinates so the map still
+        # renders its real backbone instead of coming back empty.
+        print(f"[anchor_map] live capture failed for floor {floor} ({type(exc).__name__}: {exc}); "
+              f"using cached anchors", file=sys.stderr)
+        return cached_anchor_positions(floor)
 
     parsed = parse_map_svg(svg_html, level_id) if svg_html else None
-    if parsed is None:
-        return None
+    if parsed is None or not parsed.get("anchors"):
+        print(f"[anchor_map] live map parsed no anchors for floor {floor}; using cached anchors", file=sys.stderr)
+        return cached_anchor_positions(floor)
     parsed["map_png"] = map_png
     parsed["svg_px"] = svg_px
+    parsed["live"] = True
     return parsed
 
 

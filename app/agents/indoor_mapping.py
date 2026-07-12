@@ -85,6 +85,42 @@ class IndoorMappingAgent(Agent):
             "floor": floor,
         }
 
+    def build_anchor_features(self, mall: str, floor: int, floorplan_evidence: dict | None) -> list[dict]:
+        """Real anchor landmarks (Nordstrom, Nickelodeon Universe, parking
+        rotundas, ...) as their own reference features, so the map always has
+        a real backbone even when few tenant stores can be individually
+        placed. These are read straight from the mall's map (anchor_positions
+        in the floor-plan evidence), carry a real Point position, and are
+        published directly -- they aren't tenant claims needing multi-source
+        corroboration, they're the map's own labeled reference points."""
+        if not floorplan_evidence:
+            return []
+        anchor_data = floorplan_evidence["observation"].get("anchor_positions")
+        if not anchor_data or not anchor_data.get("anchors"):
+            return []
+        view_box = anchor_data["view_box"]
+        is_live = bool(anchor_data.get("live"))
+        features: list[dict] = []
+        for a in anchor_data["anchors"]:
+            fid = f"{mall}:{floor}:anchor:{a['name']}".replace(" ", "_")
+            features.append({
+                "feature_id": fid,
+                "feature_type": FeatureType.ANCHOR.value,
+                "geometry": geom_tools.anchor_point(a["x"], a["y"]),
+                "properties": {
+                    "name": a["name"], "geometry_source": "real_anchor_reference",
+                    "anchor_view_box": view_box, "live_capture": is_live,
+                },
+                "confidence_by_attribute": {"name": 1.0, "geometry": ANCHOR_GEOMETRY_CONFIDENCE},
+                "evidence": [],
+                "version": 1,
+                "valid_from": _now().isoformat(),
+                "valid_until": None,
+                "change_reason": None,
+                "floor": floor,
+            })
+        return features
+
     @staticmethod
     def _match_anchor(raw_name: str, anchors: list[dict]) -> dict | None:
         if not anchors:

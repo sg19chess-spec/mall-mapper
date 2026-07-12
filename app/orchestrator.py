@@ -66,8 +66,18 @@ class Orchestrator:
             )
             features = self.indoor_mapping.run(config.mall, floor, validation_result, floorplan_evidence)
             store_features = [f for f in features if f["feature_type"] == "store"]
+
+            # Publish the real anchor landmarks straight to the map backbone
+            # (they're the map's own reference points, not tenant claims that
+            # need review). Idempotent upsert, so re-running iterations is a
+            # no-op rather than a duplicate.
+            anchor_features = self.indoor_mapping.build_anchor_features(config.mall, floor, floorplan_evidence)
+            for af in anchor_features:
+                self.store.publish_feature(af, config.mall, floor)
+
             self.store.log_audit(job_id, iteration, "mapping_summary", detail={
-                "agent": AGENT_INDOOR_MAPPING, "floor": floor, "features_built": len(store_features),
+                "agent": AGENT_INDOOR_MAPPING, "floor": floor,
+                "features_built": len(store_features), "anchors_placed": len(anchor_features),
             })
 
             for feature in store_features:

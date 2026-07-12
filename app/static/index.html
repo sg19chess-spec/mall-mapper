@@ -165,6 +165,7 @@
   .store-rect.synthetic { stroke-dasharray: 4 3; }
   .anchor-dot { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; cursor: pointer; }
   .anchor-dot.ocr { fill: var(--green-soft); stroke: var(--green); stroke-dasharray: 3 2; }
+  .anchor-dot.landmark { fill: var(--accent); stroke: var(--accent); }
   .anchor-label { fill: var(--text); font-size: 11px; font-weight: 600; pointer-events: none; }
   .store-label { fill: var(--text); font-size: 11px; pointer-events: none; }
   .empty-note { color: var(--text-dim); padding: 40px; text-align: center; }
@@ -554,11 +555,16 @@ function drawFloor(geojson) {
   const placed = features.filter(f => f.geometry && f.geometry.type === "Point");
   const unplaced = features.filter(f => !f.geometry);
 
+  // real_anchor_reference = the map's own labeled landmarks (Nordstrom,
+  // Nickelodeon Universe, parking rotundas). real_anchor / ocr_label =
+  // directory tenants we managed to pin to a real position.
+  const landmarks = placed.filter(f => f.properties.geometry_source === "real_anchor_reference").length;
   const realAnchors = placed.filter(f => f.properties.geometry_source === "real_anchor").length;
   const ocrPlaced = placed.filter(f => f.properties.geometry_source === "ocr_label").length;
 
   const legend = `<div class="map-legend">
-    <span class="swatch"><svg><circle cx="11" cy="8" r="6" class="anchor-dot"></circle></svg> Verified anchor position — from the map's data (${realAnchors})</span>
+    <span class="swatch"><svg><circle cx="11" cy="8" r="6" class="anchor-dot landmark"></circle></svg> Mall landmark — real position from the map (${landmarks})</span>
+    <span class="swatch"><svg><circle cx="11" cy="8" r="6" class="anchor-dot"></circle></svg> Tenant pinned to the map's data (${realAnchors})</span>
     <span class="swatch"><svg><circle cx="11" cy="8" r="6" class="anchor-dot ocr"></circle></svg> Read off the rendered map by OCR (${ocrPlaced})</span>
   </div>`;
 
@@ -599,8 +605,9 @@ function renderMapSvg(placed) {
   for (const f of placed) {
     const [x, y] = f.geometry.coordinates;
     const conf = f.properties.confidence_by_attribute || {};
-    const isOcr = f.properties.geometry_source === "ocr_label";
-    svg += `<circle class="anchor-dot${isOcr ? " ocr" : ""}" cx="${x}" cy="${y}" r="${r}" data-name="${escapeAttr(f.properties.name)}" data-conf='${escapeAttr(JSON.stringify(conf))}'></circle>`;
+    const src = f.properties.geometry_source;
+    const cls = src === "ocr_label" ? " ocr" : src === "real_anchor_reference" ? " landmark" : "";
+    svg += `<circle class="anchor-dot${cls}" cx="${x}" cy="${y}" r="${r}" data-name="${escapeAttr(f.properties.name)}" data-conf='${escapeAttr(JSON.stringify(conf))}'></circle>`;
     svg += `<text class="anchor-label" x="${x}" y="${y - r - 4}" text-anchor="middle">${escapeHtml(truncate(f.properties.name, 20))}</text>`;
   }
   svg += `</svg>`;

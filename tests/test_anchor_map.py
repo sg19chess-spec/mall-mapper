@@ -6,7 +6,13 @@ no Playwright/network needed.
 """
 from __future__ import annotations
 
-from app.agents.tools.anchor_map import FLOOR_TO_LEVEL_ID, parse_map_svg
+from app.agents.tools.anchor_map import (
+    CACHED_ANCHORS,
+    FLOOR_TO_LEVEL_ID,
+    cached_anchor_positions,
+    ocr_positions_from_capture,
+    parse_map_svg,
+)
 
 # A trimmed but real snippet of #map_svg's outerHTML, captured live from
 # mallofamerica.com/directory (Map View tab, floor 1 = lvl-1804).
@@ -112,3 +118,61 @@ def test_returns_empty_anchors_when_level_has_none():
     assert "West Parking" in names  # visible on all 4
     assert "JW Marriott" in names
     assert "Nordstrom" not in names  # not tagged lvl-1807
+
+
+# ---------------------------------------------------------------------------
+# cached anchor fallback (used when the live WebGL map can't be driven)
+# ---------------------------------------------------------------------------
+
+def test_cached_anchor_positions_are_real_shaped_and_not_live():
+    cap = cached_anchor_positions(1)
+    assert cap is not None
+    assert cap["live"] is False
+    assert cap["map_png"] is None
+    assert len(cap["anchors"]) == len(CACHED_ANCHORS[1]["anchors"])
+    nord = next(a for a in cap["anchors"] if a["name"] == "Nordstrom")
+    assert nord["x"] == 745.0 and nord["y"] == 955.0
+
+
+def test_cached_anchor_positions_none_for_unknown_floor():
+    assert cached_anchor_positions(9) is None
+
+
+def test_cached_anchor_positions_returns_a_copy():
+    # callers mutate the returned dict (map_png etc.) -- must not corrupt the cache
+    cap = cached_anchor_positions(1)
+    cap["anchors"][0]["x"] = -999
+    assert CACHED_ANCHORS[1]["anchors"][0]["x"] != -999
+
+
+# ---------------------------------------------------------------------------
+# OCR screenshot-pixel -> viewBox conversion
+# ---------------------------------------------------------------------------
+
+def test_ocr_positions_convert_pixels_to_viewbox_space():
+    # a 700x525 screenshot of a map whose viewBox is [640,880,400,300]:
+    # a token centred at pixel (350, 262.5) is the middle -> viewBox (840, 1030)
+    view_box = [640.0, 880.0, 400.0, 300.0]
+    svg_px = [700.0, 525.0]
+    ocr = [{"text": "Nordstrom", "bbox": [340, 252, 20, 21], "confidence": 0.9}]
+    positions = ocr_positions_from_capture(view_box, svg_px, ocr)
+    assert len(positions) == 1
+    assert positions[0]["text"] == "Nordstrom"
+    assert abs(positions[0]["x"] - 840.0) < 1.0
+    assert abs(positions[0]["y"] - 1030.0) < 1.0
+
+
+def test_ocr_positions_drop_low_confidence_and_tiny_tokens():
+    view_box = [640.0, 880.0, 400.0, 300.0]
+    svg_px = [700.0, 525.0]
+    ocr = [
+        {"text": "x", "bbox": [10, 10, 5, 5], "confidence": 0.9},        # too short
+        {"text": "Macys", "bbox": [10, 10, 20, 20], "confidence": 0.1},  # too low conf
+    ]
+    assert ocr_positions_from_capture(view_box, svg_px, ocr) == []
+
+
+def test_ocr_positions_empty_without_pixel_size():
+    view_box = [640.0, 880.0, 400.0, 300.0]
+    ocr = [{"text": "Nordstrom", "bbox": [340, 252, 20, 21], "confidence": 0.9}]
+    assert ocr_positions_from_capture(view_box, None, ocr) == []
