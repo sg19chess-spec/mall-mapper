@@ -14,7 +14,6 @@ from app.agents.indoor_mapping import (
     ANCHOR_GEOMETRY_CONFIDENCE,
     IndoorMappingAgent,
 )
-from app.agents.tools.floorplan import synthetic_floorplan_grid
 
 
 class FakeStore:
@@ -51,12 +50,12 @@ ANCHORS = {
 }
 
 
-def make_floorplan_evidence(anchor_positions: dict | None, grid: dict | None) -> dict:
+def make_floorplan_evidence(anchor_positions: dict | None, ocr_positions: list | None = None) -> dict:
     return {
         "observation": {
             "ocr_results": [],
-            "synthetic_grid": grid,
             "anchor_positions": anchor_positions,
+            "ocr_positions": ocr_positions or [],
         }
     }
 
@@ -91,11 +90,16 @@ def test_match_anchor_returns_none_for_empty_anchor_list():
 # run(): geometry source selection
 # ---------------------------------------------------------------------------
 
+OCR_POSITIONS = [
+    {"text": "Sephora", "x": 300.0, "y": 500.0, "confidence": 0.9},
+    {"text": "Claires", "x": 420.0, "y": 640.0, "confidence": 0.7},
+]
+
+
 def test_anchor_matched_store_gets_real_point_geometry():
     entities = {"nordstrom": make_entity("Nordstrom")}
     validation_result = make_validation_result(entities)
-    grid = synthetic_floorplan_grid(floor=2, store_count=1)
-    floorplan_evidence = make_floorplan_evidence(ANCHORS, grid)
+    floorplan_evidence = make_floorplan_evidence(ANCHORS)
 
     agent = IndoorMappingAgent(FakeStore())
     features = agent.run("Mall of America", 2, validation_result, floorplan_evidence)
@@ -108,62 +112,63 @@ def test_anchor_matched_store_gets_real_point_geometry():
     assert store_feature["confidence_by_attribute"]["geometry"] == ANCHOR_GEOMETRY_CONFIDENCE
 
 
-def test_non_anchor_store_falls_back_to_synthetic_polygon():
-    entities = {"claires": make_entity("Claire's Boutique")}
+def test_ocr_matched_store_gets_real_point_from_ocr_label():
+    # a store that isn't an anchor but whose name was OCR'd off the rendered
+    # map gets a real Point at the OCR label position (not a synthetic one)
+    entities = {"sephora": make_entity("Sephora")}
     validation_result = make_validation_result(entities)
-    grid = synthetic_floorplan_grid(floor=2, store_count=1)
-    floorplan_evidence = make_floorplan_evidence(ANCHORS, grid)
+    floorplan_evidence = make_floorplan_evidence(ANCHORS, OCR_POSITIONS)
 
     agent = IndoorMappingAgent(FakeStore())
     features = agent.run("Mall of America", 2, validation_result, floorplan_evidence)
 
-    store_feature = next(f for f in features if f["_canonical_key"] == "claires")
-    assert store_feature["geometry"]["type"] == "Polygon"
-    assert store_feature["properties"]["geometry_source"] == "synthetic_placeholder"
-    assert store_feature["confidence_by_attribute"]["geometry"] < ANCHOR_GEOMETRY_CONFIDENCE
+    f = next(f for f in features if f["_canonical_key"] == "sephora")
+    assert f["geometry"]["type"] == "Point"
+    assert tuple(f["geometry"]["coordinates"]) == (300.0, 500.0)
+    assert f["properties"]["geometry_source"] == "ocr_label"
+    assert f["properties"]["ocr_text"] == "Sephora"
+    assert 0 < f["confidence_by_attribute"]["geometry"] < ANCHOR_GEOMETRY_CONFIDENCE
 
 
-def test_anchor_matched_entity_does_not_consume_a_synthetic_slot():
-    # only one synthetic slot is available; an anchor-matched entity should
-    # not consume it, leaving it free for the non-anchor entity
-    entities = {
-        "nordstrom": make_entity("Nordstrom"),
-        "claires": make_entity("Claire's Boutique"),
-    }
-    validation_result = make_validation_result(entities)
-    grid = synthetic_floorplan_grid(floor=2, store_count=1)  # only 1 slot
-    floorplan_evidence = make_floorplan_evidence(ANCHORS, grid)
-
-    agent = IndoorMappingAgent(FakeStore())
-    features = agent.run("Mall of America", 2, validation_result, floorplan_evidence)
-
-    nordstrom = next(f for f in features if f["_canonical_key"] == "nordstrom")
-    claires = next(f for f in features if f["_canonical_key"] == "claires")
-    assert nordstrom["properties"]["geometry_source"] == "real_anchor"
-    assert claires["properties"]["geometry_source"] == "synthetic_placeholder"
-    assert claires["geometry"] is not None  # got the one available slot
-
-
-def test_no_anchor_data_falls_back_to_synthetic_for_all_stores():
+def test_anchor_takes_precedence_over_ocr():
+    # if a store matches both an anchor and an OCR label, the (more reliable)
+    # anchor DOM position wins
     entities = {"nordstrom": make_entity("Nordstrom")}
     validation_result = make_validation_result(entities)
-    grid = synthetic_floorplan_grid(floor=2, store_count=1)
-    floorplan_evidence = make_floorplan_evidence(None, grid)  # anchor fetch failed/unavailable
+    ocr = OCR_POSITIONS + [{"text": "Nordstrom", "x": 10.0, "y": 20.0, "confidence": 0.9}]
+    floorplan_evidence = make_floorplan_evidence(ANCHORS, ocr)
 
     agent = IndoorMappingAgent(FakeStore())
     features = agent.run("Mall of America", 2, validation_result, floorplan_evidence)
 
-    store_feature = next(f for f in features if f["_canonical_key"] == "nordstrom")
-    assert store_feature["properties"]["geometry_source"] == "synthetic_placeholder"
+    f = next(f for f in features if f["_canonical_key"] == "nordstrom")
+    assert f["properties"]["geometry_source"] == "real_anchor"
+    assert tuple(f["geometry"]["coordinates"]) == (850.5, 1020.0)
 
 
-def test_no_floorplan_evidence_at_all_still_produces_features_without_geometry():
+def test_unmatched_store_is_unplaced_no_synthetic_fallback():
+    entities = {"claires": make_entity("Some Tiny Store")}
+    validation_result = make_validation_result(entities)
+    floorplan_evidence = make_floorplan_evidence(ANCHORS, [])  # no OCR match either
+
+    agent = IndoorMappingAgent(FakeStore())
+    features = agent.run("Mall of America", 2, validation_result, floorplan_evidence)
+
+    f = next(f for f in features if f["_canonical_key"] == "claires")
+    assert f["geometry"] is None
+    assert f["properties"]["geometry_source"] == "unplaced"
+    # geometry key is omitted entirely so Publication Review's geometry gate
+    # treats it as "nothing to check" rather than "geometry failed"
+    assert "geometry" not in f["confidence_by_attribute"]
+
+
+def test_no_floorplan_evidence_at_all_leaves_store_unplaced():
     entities = {"nordstrom": make_entity("Nordstrom")}
     validation_result = make_validation_result(entities)
 
     agent = IndoorMappingAgent(FakeStore())
     features = agent.run("Mall of America", 2, validation_result, None)
 
-    store_feature = next(f for f in features if f["_canonical_key"] == "nordstrom")
-    assert store_feature["geometry"] is None
-    assert store_feature["properties"]["geometry_source"] == "synthetic_placeholder"
+    f = next(f for f in features if f["_canonical_key"] == "nordstrom")
+    assert f["geometry"] is None
+    assert f["properties"]["geometry_source"] == "unplaced"

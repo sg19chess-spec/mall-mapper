@@ -15,18 +15,24 @@ from datetime import datetime, timezone
 from rapidfuzz import fuzz, process
 
 from app.agents.base import Agent
+from app.agents.tools import anchor_map
 from app.agents.tools import geometry as geom_tools
 from app.agents.tools.normalizer import normalize
 from app.schemas import FeatureType, GeometryFeature, GeometryType, IndoorFeature
 
 CHANGE_TOLERANCE_FIELDS = ("unit",)
 
-# Real anchor positions are extracted from the mall's own map (see
-# agents/tools/anchor_map.py) -- a real coordinate is worth a lot more
-# confidence than the synthetic placeholder grid, hence the much higher
-# base score here vs. geom_tools.geometry_confidence()'s synthetic-mode 0.35.
-ANCHOR_GEOMETRY_CONFIDENCE = 0.9
+# Every published position is real -- no synthetic fallback. A store gets
+# geometry only from (a) the map's own SVG DOM anchor list, or (b) a label
+# OCR'd off a screenshot of the rendered floor map. Anything else gets no
+# geometry at all (it is not placed on the map) rather than a fabricated one.
+ANCHOR_GEOMETRY_CONFIDENCE = 0.9   # position read straight from the map's SVG DOM
 ANCHOR_NAME_MATCH_THRESHOLD = 80
+# OCR'd label positions are real but noisier than a DOM coordinate (rendered
+# text recognition, screenshot->viewBox scaling), so scored below anchors and
+# scaled by the OCR engine's own per-token confidence.
+OCR_GEOMETRY_BASE_CONFIDENCE = 0.55
+OCR_GEOMETRY_MAX_CONFIDENCE = 0.8
 
 
 def _now():
@@ -91,24 +97,16 @@ class IndoorMappingAgent(Agent):
 
     def run(self, mall: str, floor: int, validation_result: dict, floorplan_evidence: dict | None) -> list[dict]:
         entities = validation_result["entities"]
-        grid = None
-        ocr_confidence = None
-        has_official_floorplan = False
         anchor_data = None
+        ocr_positions: list[dict] = []
         if floorplan_evidence:
             obs = floorplan_evidence["observation"]
-            grid = obs.get("synthetic_grid")
-            ocr_results = obs.get("ocr_results") or []
-            has_official_floorplan = bool(ocr_results)
-            if ocr_results:
-                ocr_confidence = sum(r["confidence"] for r in ocr_results) / len(ocr_results)
             anchor_data = obs.get("anchor_positions")
+            ocr_positions = obs.get("ocr_positions") or []
 
         anchors = anchor_data["anchors"] if anchor_data else []
         view_box = anchor_data["view_box"] if anchor_data else None
-        slots = grid["store_slots"] if grid else []
         features: list[dict] = []
-        synthetic_slot_index = 0  # separate counter -- anchor-matched entities don't consume a synthetic slot
 
         for key, entity in entities.items():
             feature_id = self._feature_id(mall, floor, key)
@@ -122,22 +120,35 @@ class IndoorMappingAgent(Agent):
             for field, data in entity["fields"].items():
                 confidence_by_attribute[field] = data["confidence"]
 
+            # Real positions only. Anchor DOM first (most reliable), then a
+            # label OCR'd off the rendered map; otherwise the store is left
+            # unplaced (geometry=None) rather than given a fabricated spot.
             matched_anchor = self._match_anchor(entity["raw_name"], anchors)
+            ocr_match = None if matched_anchor else anchor_map.best_label_match(entity["raw_name"], ocr_positions)
             if matched_anchor:
                 geometry = geom_tools.anchor_point(matched_anchor["x"], matched_anchor["y"])
                 confidence_by_attribute["geometry"] = ANCHOR_GEOMETRY_CONFIDENCE
                 props["geometry_source"] = "real_anchor"
                 props["anchor_view_box"] = view_box
                 props["matched_anchor_name"] = matched_anchor["name"]
-            elif synthetic_slot_index < len(slots):
-                geometry = geom_tools.store_polygon_from_slot(slots[synthetic_slot_index])
-                synthetic_slot_index += 1
-                confidence_by_attribute["geometry"] = geom_tools.geometry_confidence(has_official_floorplan, ocr_confidence)
-                props["geometry_source"] = "synthetic_placeholder"
+            elif ocr_match:
+                geometry = geom_tools.anchor_point(ocr_match["x"], ocr_match["y"])
+                confidence_by_attribute["geometry"] = round(
+                    min(OCR_GEOMETRY_MAX_CONFIDENCE,
+                        OCR_GEOMETRY_BASE_CONFIDENCE * (0.5 + 0.5 * ocr_match.get("confidence", 0.0)) * 2),
+                    2,
+                )
+                props["geometry_source"] = "ocr_label"
+                props["anchor_view_box"] = view_box
+                props["ocr_text"] = ocr_match["text"]
             else:
+                # No real position available -- leave geometry unknown (not a
+                # failing 0.0). Identity can still publish; the store is just
+                # not drawn on the map. Omitting the geometry key entirely
+                # means Publication Review's geometry gate treats it as
+                # "no geometry to check" rather than "geometry failed".
                 geometry = None
-                confidence_by_attribute["geometry"] = geom_tools.geometry_confidence(has_official_floorplan, ocr_confidence)
-                props["geometry_source"] = "synthetic_placeholder"
+                props["geometry_source"] = "unplaced"
 
             previous = self._previous_version(feature_id)
             change_reason = self._detect_change(previous, props)
@@ -160,8 +171,5 @@ class IndoorMappingAgent(Agent):
                 "_previous_version": previous,
                 "_explanation": entity["explanation"],
             })
-
-        if grid:
-            features.append(self.build_corridor_feature(mall, floor, grid["corridor"]))
 
         return features

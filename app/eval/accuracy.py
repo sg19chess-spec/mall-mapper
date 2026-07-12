@@ -4,10 +4,13 @@
    directory (fuzzy name match), floor/category accuracy %.
 2. Evidence-agreement score: average per-attribute confidence across
    published features, as a proxy for cross-source agreement.
-3. Geometry validity rate: fraction of published features whose geometry
-   confidence clears a "plausibly valid" threshold (a proxy -- full spatial
-   rule re-checking needs floor topology, e.g. the corridor feature, which
-   isn't persisted post-hoc since only stores are published).
+3. Placement rate: fraction of published stores that got a *real* position
+   (from the map's SVG DOM anchors or an OCR'd map label). Stores with no
+   real position publish on identity but are left unplaced -- there is no
+   synthetic fallback -- so this measures how much of the floor we can
+   honestly draw.
+4. Geometry validity rate: of the stores that *were* placed, the fraction
+   whose geometry confidence clears a "plausibly valid" threshold.
 """
 from __future__ import annotations
 
@@ -63,19 +66,31 @@ def compute_accuracy_report(store, mall: str, floors: list[int], base_url: str =
         sum(evidence_agreement_scores) / len(evidence_agreement_scores) if evidence_agreement_scores else 0.0
     )
 
+    # A store is "placed" only if it has a real geometry (anchor DOM or OCR
+    # label). No synthetic fallback exists, so unplaced stores simply have
+    # geometry == None and are excluded from the validity denominator rather
+    # than counted as invalid.
+    placed_stores = [f for f in published_stores if f.get("geometry")]
+    placement_rate = len(placed_stores) / len(published_stores) if published_stores else 0.0
+
     geometry_valid = [
-        f for f in published_stores
+        f for f in placed_stores
         if f["confidence_by_attribute"].get("geometry", 0) >= GEOMETRY_VALID_CONFIDENCE
     ]
-    geometry_validity_rate = len(geometry_valid) / len(published_stores) if published_stores else 0.0
+    # vacuously 1.0 when nothing is placed: there are no invalid geometries
+    # among zero placed stores. placement_rate is the metric that reflects
+    # "few stores on the map", not this one.
+    geometry_validity_rate = len(geometry_valid) / len(placed_stores) if placed_stores else 1.0
 
     return {
         "ground_truth_count": len(ground_truth),
         "published_count": len(published_stores),
+        "placed_count": len(placed_stores),
         "directory_agreement": {
             "recall": round(recall, 3), "precision": round(precision, 3),
             "floor_accuracy": round(floor_accuracy, 3), "category_accuracy": round(category_accuracy, 3),
         },
         "evidence_agreement_score": round(evidence_agreement_score, 3),
+        "placement_rate": round(placement_rate, 3),
         "geometry_validity_rate": round(geometry_validity_rate, 3),
     }

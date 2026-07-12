@@ -41,8 +41,15 @@ _Y_PATTERN = re.compile(r"y:\s*(-?\d+(?:\.\d+)?)px")
 
 
 def fetch_anchor_positions(base_url: str, floor: int, timeout_ms: int = 30000) -> dict | None:
-    """Returns {"view_box": [minx, miny, w, h], "anchors": [{"name", "x", "y"}, ...]}
-    for the given floor, or None if the map/floor couldn't be reached."""
+    """Returns {"view_box": [minx, miny, w, h], "anchors": [{"name", "x", "y"}, ...],
+    "map_png": bytes|None, "svg_px": [w, h]|None} for the given floor, or None
+    if the map/floor couldn't be reached.
+
+    In the same browser session that reads the anchor SVG, this also
+    screenshots the rendered #map_svg element and records its on-screen
+    pixel size -- so OCR run on that real screenshot (see
+    ocr_positions_from_capture) yields label positions convertible into the
+    same viewBox coordinate space the anchors live in."""
     level_id = FLOOR_TO_LEVEL_ID.get(floor)
     if level_id is None:
         return None
@@ -52,6 +59,8 @@ def fetch_anchor_positions(base_url: str, floor: int, timeout_ms: int = 30000) -
         print(f"[anchor_map] playwright not installed: {exc}", file=sys.stderr)
         return None
 
+    map_png = None
+    svg_px = None
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
@@ -70,12 +79,78 @@ def fetch_anchor_positions(base_url: str, floor: int, timeout_ms: int = 30000) -
             except Exception:
                 pass  # floor switch failed -- fall through, parsing below is a no-op if wrong floor's labels aren't tagged for level_id
             svg_html = page.eval_on_selector("#map_svg", "el => el.outerHTML")
+            # real screenshot of the rendered map + its on-screen pixel size,
+            # for OCR. Best-effort: a screenshot failure must not lose the
+            # anchor data we already have.
+            try:
+                el = page.query_selector("#map_svg")
+                if el:
+                    box = el.bounding_box()
+                    if box and box["width"] > 0 and box["height"] > 0:
+                        map_png = el.screenshot()
+                        svg_px = [box["width"], box["height"]]
+            except Exception as exc:
+                print(f"[anchor_map] map screenshot failed for floor {floor}: {type(exc).__name__}: {exc}", file=sys.stderr)
             browser.close()
     except Exception as exc:
         print(f"[anchor_map] fetch_anchor_positions failed for floor {floor}: {type(exc).__name__}: {exc}", file=sys.stderr)
         return None
 
-    return parse_map_svg(svg_html, level_id) if svg_html else None
+    parsed = parse_map_svg(svg_html, level_id) if svg_html else None
+    if parsed is None:
+        return None
+    parsed["map_png"] = map_png
+    parsed["svg_px"] = svg_px
+    return parsed
+
+
+def ocr_positions_from_capture(view_box: list[float], svg_px: list[float] | None,
+                               ocr_results: list[dict], min_confidence: float = 0.4) -> list[dict]:
+    """Converts OCR text boxes (in screenshot-pixel space) into label
+    positions in the map's viewBox coordinate space -- the same space the
+    DOM anchors use -- so both can be placed on one real coordinate system.
+
+    Each OCR result is {"text", "bbox": [x, y, w, h], "confidence"}; the
+    screenshot is a render of the #map_svg element whose on-screen size is
+    svg_px, so a pixel maps linearly onto the viewBox. Returns
+    [{"text", "x", "y", "confidence"}, ...], dropping empty/low-confidence
+    tokens. Returns [] if the geometry needed for conversion is missing."""
+    if not svg_px or not view_box or svg_px[0] <= 0 or svg_px[1] <= 0:
+        return []
+    minx, miny, vb_w, vb_h = view_box
+    scale_x = vb_w / svg_px[0]
+    scale_y = vb_h / svg_px[1]
+    positions = []
+    for r in ocr_results:
+        text = (r.get("text") or "").strip()
+        if len(text) < 2 or r.get("confidence", 0) < min_confidence:
+            continue
+        x, y, w, h = r["bbox"]
+        cx_px = x + w / 2
+        cy_px = y + h / 2
+        positions.append({
+            "text": text,
+            "x": minx + cx_px * scale_x,
+            "y": miny + cy_px * scale_y,
+            "confidence": r.get("confidence", 0.0),
+        })
+    return positions
+
+
+def best_label_match(name: str, positions: list[dict], threshold: int = 82) -> dict | None:
+    """Fuzzy-matches a directory store name against OCR'd map labels
+    (each {"text", "x", "y", "confidence"}), returning the best-matching
+    position or None. token_set_ratio handles word-order/subset differences
+    ("Nordstrom" vs "Nordstrom Rack", "Macy's" vs "MACYS")."""
+    from rapidfuzz import fuzz, process
+
+    if not positions:
+        return None
+    texts = [p["text"] for p in positions]
+    result = process.extractOne(name, texts, scorer=fuzz.token_set_ratio)
+    if result and result[1] >= threshold:
+        return positions[result[2]]
+    return None
 
 
 def parse_map_svg(svg_html: str, level_id: str) -> dict | None:

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from typing import Any
 
 _ANTHROPIC_MODEL = os.environ.get("MALL_MAPPER_MODEL", "claude-sonnet-5")
@@ -95,6 +96,25 @@ class Agent:
 
     def ask_llm_json(self, system: str, prompt: str, max_tokens: int = 1024) -> Any:
         return _extract_json(self.ask_llm(system, prompt, max_tokens=max_tokens))
+
+    def try_llm_json(self, system: str, prompt: str, max_tokens: int = 1024) -> Any | None:
+        """Best-effort LLM call for steps that have a deterministic fallback.
+        Returns the parsed JSON on success, or None if no provider is
+        configured (AgentUnavailable) or the call/parse failed -- so a
+        transient LLM outage degrades to the heuristic path instead of
+        failing the whole pipeline run. The caller decides what to do with
+        None. Errors are logged to stderr so a silent fallback is
+        diagnosable rather than invisible."""
+        try:
+            return self.ask_llm_json(system, prompt, max_tokens=max_tokens)
+        except AgentUnavailable:
+            return None
+        except Exception as exc:  # network blip, malformed JSON, rate limit, etc.
+            print(f"[{self.name}] LLM call failed, falling back to heuristic: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return None
+
+    def llm_available(self) -> bool:
+        return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY"))
 
 
 def _extract_json(text: str) -> Any:

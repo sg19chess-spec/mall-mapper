@@ -164,6 +164,7 @@
   .store-rect.low { fill: rgba(220,38,38,0.14); stroke: var(--red); }
   .store-rect.synthetic { stroke-dasharray: 4 3; }
   .anchor-dot { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; cursor: pointer; }
+  .anchor-dot.ocr { fill: var(--green-soft); stroke: var(--green); stroke-dasharray: 3 2; }
   .anchor-label { fill: var(--text); font-size: 11px; font-weight: 600; pointer-events: none; }
   .store-label { fill: var(--text); font-size: 11px; pointer-events: none; }
   .empty-note { color: var(--text-dim); padding: 40px; text-align: center; }
@@ -463,8 +464,9 @@ function renderEvidenceItem(detail) {
 
   // observation values as chips, e.g. floor: 2, unit: S245, timestamp: 00:02:02
   const obs = detail.observation || {};
+  const INTERNAL_OBS_KEYS = ["ocr_results", "synthetic_grid", "anchor_positions", "ocr_positions"];
   const chips = Object.entries(obs)
-    .filter(([k]) => k !== "ocr_results" && k !== "synthetic_grid") // internal floorplan-only payload, not user-facing
+    .filter(([k]) => !INTERNAL_OBS_KEYS.includes(k)) // internal floorplan-only payload, not user-facing
     .map(([k, v]) => `<span class="chip">${escapeHtml(k)}: ${escapeHtml(v)}</span>`);
 
   if (typeof detail.certainty === "number" && detail.certainty < 0.7) {
@@ -523,7 +525,7 @@ async function renderMaps(floors, mall) {
 
   const pending = lastReport && lastReport.human_review_queue_size;
   mapNote.innerHTML = pending
-    ? `<div class="map-note">⚠ Only <b>&nbsp;published&nbsp;</b> stores appear below — <b>${pending}</b> store${pending === 1 ? "" : "s"} across this run ${pending === 1 ? "is" : "are"} still waiting on human review and won't show on the map until approved. See the Publication Review decisions in the activity feed for why.</div>`
+    ? `<div class="map-note">⚠ The map shows only <b>&nbsp;real, verified&nbsp;</b> positions — no fabricated spots. <b>${pending}</b> store${pending === 1 ? "" : "s"} across this run ${pending === 1 ? "is" : "are"} still awaiting human review, and stores whose exact location isn't in any public source are listed as “no real position” rather than drawn.</div>`
     : "";
 
   await loadFloorMap(floors[0], mall);
@@ -541,94 +543,65 @@ async function loadFloorMap(floor, mall) {
   }
 }
 
-// Real anchor positions (Point geometry, extracted from the mall's own live
-// map -- see agents/tools/anchor_map.py) and synthetic placeholder stores
-// (Polygon geometry, laid out along a synthetic corridor grid) live in two
-// completely different coordinate spaces -- one is the mall's real map
-// pixel space, the other is an arbitrary grid we invented because most
-// small stores have no publicly extractable position at all. Merging them
-// into one continuous SVG would silently imply a precision neither space
-// actually has, so they're rendered as two clearly labeled panels instead,
-// each honest about what it is.
+// Every placed store has a REAL position in the map's own viewBox
+// coordinate space: either read straight from the map's SVG DOM
+// (geometry_source "real_anchor") or OCR'd off a screenshot of the rendered
+// floor map (geometry_source "ocr_label"). There is no synthetic fallback --
+// stores we can't place get null geometry and are listed separately rather
+// than shown at a made-up spot. So this is one honest map, not two.
 function drawFloor(geojson) {
-  const features = geojson.features || [];
-  const anchors = features.filter(f => f.geometry && f.geometry.type === "Point");
-  const synthetic = features.filter(f => f.geometry && f.geometry.type === "Polygon");
-  const corridor = features.find(f => f.geometry && f.geometry.type === "LineString");
+  const features = (geojson.features || []).filter(f => f.properties && f.properties.feature_type !== "corridor");
+  const placed = features.filter(f => f.geometry && f.geometry.type === "Point");
+  const unplaced = features.filter(f => !f.geometry);
 
-  if (!anchors.length && !synthetic.length) {
-    mapWrap.innerHTML = `<div class="empty-note">No store geometry published on this floor yet.</div>`;
-    return;
-  }
+  const realAnchors = placed.filter(f => f.properties.geometry_source === "real_anchor").length;
+  const ocrPlaced = placed.filter(f => f.properties.geometry_source === "ocr_label").length;
 
   const legend = `<div class="map-legend">
-    <span class="swatch"><svg><circle cx="11" cy="8" r="6" class="anchor-dot"></circle></svg> Verified position (from the mall's live map)</span>
-    <span class="swatch"><svg><rect x="1" y="1" width="20" height="14" rx="2" class="store-rect high synthetic"></rect></svg> Approximate placeholder (exact position not publicly available)</span>
+    <span class="swatch"><svg><circle cx="11" cy="8" r="6" class="anchor-dot"></circle></svg> Verified anchor position — from the map's data (${realAnchors})</span>
+    <span class="swatch"><svg><circle cx="11" cy="8" r="6" class="anchor-dot ocr"></circle></svg> Read off the rendered map by OCR (${ocrPlaced})</span>
   </div>`;
 
   let html = legend;
-  if (anchors.length) html += `<div class="map-panel"><h3>Anchor stores — real positions</h3><div>${renderAnchorSvg(anchors)}</div></div>`;
-  if (synthetic.length) html += `<div class="map-panel"><h3>Other stores — approximate layout</h3><div>${renderSyntheticSvg(synthetic, corridor)}</div></div>`;
-  mapWrap.innerHTML = html;
+  if (placed.length) {
+    html += `<div class="map-panel"><h3>Floor map — ${placed.length} real position${placed.length === 1 ? "" : "s"}</h3><div>${renderMapSvg(placed)}</div></div>`;
+  } else {
+    html += `<div class="empty-note">No store could be placed at a real position on this floor. Every published store here is in the unplaced list below (its exact location isn't publicly available).</div>`;
+  }
 
-  mapWrap.querySelectorAll(".store-rect, .anchor-dot").forEach(el => {
+  if (unplaced.length) {
+    const names = unplaced.map(f => `<span class="chip">${escapeHtml(f.properties.name)}</span>`).join("");
+    html += `<div class="map-panel"><h3>Published, but no real position (${unplaced.length})</h3>
+      <div style="padding:12px 14px; font-size:12px; color:var(--text-dim)">These stores are confirmed on this floor, but their exact position isn't in any public source — so they're intentionally not drawn (no fabricated spot).<div class="evidence-chips" style="margin-top:8px">${names}</div></div></div>`;
+  }
+
+  mapWrap.innerHTML = html;
+  mapWrap.querySelectorAll(".anchor-dot").forEach(el => {
     el.addEventListener("mousemove", (e) => showTooltip(e, el));
     el.addEventListener("mouseleave", hideTooltip);
   });
 }
 
-function renderAnchorSvg(anchors) {
-  const vb = anchors[0].properties.anchor_view_box || null;
+function renderMapSvg(placed) {
+  const vb = placed[0].properties.anchor_view_box || null;
   let minX, minY, w, h;
   if (vb) {
     [minX, minY, w, h] = vb;
   } else {
-    const xs = anchors.map(f => f.geometry.coordinates[0]);
-    const ys = anchors.map(f => f.geometry.coordinates[1]);
+    const xs = placed.map(f => f.geometry.coordinates[0]);
+    const ys = placed.map(f => f.geometry.coordinates[1]);
     const pad = 60;
     minX = Math.min(...xs) - pad; minY = Math.min(...ys) - pad;
     w = Math.max(...xs) - minX + pad; h = Math.max(...ys) - minY + pad;
   }
+  const r = Math.max(w, h) * 0.012;
   let svg = `<svg viewBox="${minX} ${minY} ${w} ${h}" preserveAspectRatio="xMidYMid meet">`;
-  for (const f of anchors) {
+  for (const f of placed) {
     const [x, y] = f.geometry.coordinates;
     const conf = f.properties.confidence_by_attribute || {};
-    const r = Math.max(w, h) * 0.012;
-    svg += `<circle class="anchor-dot" cx="${x}" cy="${y}" r="${r}" data-name="${escapeAttr(f.properties.name)}" data-conf='${escapeAttr(JSON.stringify(conf))}'></circle>`;
+    const isOcr = f.properties.geometry_source === "ocr_label";
+    svg += `<circle class="anchor-dot${isOcr ? " ocr" : ""}" cx="${x}" cy="${y}" r="${r}" data-name="${escapeAttr(f.properties.name)}" data-conf='${escapeAttr(JSON.stringify(conf))}'></circle>`;
     svg += `<text class="anchor-label" x="${x}" y="${y - r - 4}" text-anchor="middle">${escapeHtml(truncate(f.properties.name, 20))}</text>`;
-  }
-  svg += `</svg>`;
-  return svg;
-}
-
-function renderSyntheticSvg(stores, corridor) {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const f of stores) {
-    for (const [x, y] of f.geometry.coordinates[0]) {
-      minX = Math.min(minX, x); minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
-    }
-  }
-  const pad = 40;
-  minX -= pad; minY -= pad; maxX += pad; maxY += pad;
-  const w = maxX - minX, h = maxY - minY;
-
-  let svg = `<svg viewBox="${minX} ${minY} ${w} ${h}" preserveAspectRatio="xMidYMid meet">`;
-  if (corridor) {
-    const pts = corridor.geometry.coordinates.map(([x, y]) => `${x},${y}`).join(" ");
-    svg += `<polyline points="${pts}" fill="none" stroke="var(--border)" stroke-width="3"></polyline>`;
-  }
-  for (const f of stores) {
-    const coords = f.geometry.coordinates[0];
-    const points = coords.map(([x, y]) => `${x},${y}`).join(" ");
-    const conf = f.properties.confidence_by_attribute || {};
-    const identityVals = Object.entries(conf).filter(([k]) => k !== "geometry").map(([, v]) => v);
-    const minConf = identityVals.length ? Math.min(...identityVals) : 0;
-    const tier = minConf >= 0.7 ? "high" : minConf >= 0.5 ? "mid" : "low";
-    const cx = coords.reduce((s, c) => s + c[0], 0) / coords.length;
-    const cy = coords.reduce((s, c) => s + c[1], 0) / coords.length;
-    svg += `<polygon class="store-rect synthetic ${tier}" points="${points}" data-name="${escapeAttr(f.properties.name)}" data-conf='${escapeAttr(JSON.stringify(conf))}'></polygon>`;
-    svg += `<text class="store-label" x="${cx}" y="${cy}" text-anchor="middle" dominant-baseline="middle">${escapeHtml(truncate(f.properties.name, 12))}</text>`;
   }
   svg += `</svg>`;
   return svg;

@@ -71,6 +71,66 @@ class PublicationReviewAgent(Agent):
             (minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy), (minx, miny),
         ]]}
 
+    def _decide(self, *, can_pass: bool, iteration: int, max_iterations: int, reasons: list[str],
+                feature: dict, min_confidence: float, conflicts: list, violations: list[str]) -> tuple[str, str, str]:
+        """Returns (recommendation, reason, explanation_note). The LLM makes
+        the judgment call when a provider is configured; a deterministic
+        rule is the fallback. Either way the hard guardrails are enforced:
+        `pass` only when can_pass, and no `retry` once iterations are spent
+        (that becomes `human_review`)."""
+        det_recommendation, det_reason = self._deterministic_decision(can_pass, iteration, max_iterations, reasons)
+
+        if not self.llm_available():
+            return det_recommendation, det_reason, self._note_for(det_recommendation, det_reason, iteration)
+
+        system = (
+            "You are an SME reviewing one candidate indoor-map feature before publication. "
+            "Decide exactly one of: pass, retry, human_review. "
+            "pass = publish now; retry = ask the research agent for more evidence; "
+            "human_review = send to a human. Respond with only JSON."
+        )
+        prompt = (
+            f'Store: "{feature["properties"].get("name")}" (floor {feature.get("floor")})\n'
+            f"Per-attribute confidence: {feature['confidence_by_attribute']}\n"
+            f"Lowest identity confidence: {round(min_confidence, 3)} (publish threshold {PASS_THRESHOLD})\n"
+            f"Unresolved conflicts: {[c.conflict_type.value for c in conflicts]}\n"
+            f"Geometry rule violations: {violations}\n"
+            f"Iteration {iteration} of at most {max_iterations}.\n"
+            f"Guardrail: this feature {'IS' if can_pass else 'is NOT'} eligible to pass.\n\n"
+            'Return {"recommendation": "pass|retry|human_review", "reason": "<one sentence>"}. '
+            "If it is not eligible to pass, choose retry (if iterations remain) or human_review."
+        )
+        parsed = self.try_llm_json(system, prompt, max_tokens=300)
+        rec = parsed.get("recommendation") if isinstance(parsed, dict) else None
+        llm_reason = (parsed.get("reason") or "").strip() if isinstance(parsed, dict) else ""
+        if rec not in ("pass", "retry", "human_review") or not llm_reason:
+            return det_recommendation, det_reason, self._note_for(det_recommendation, det_reason, iteration)
+
+        # clamp the LLM's choice to the hard guardrails
+        if rec == "pass" and not can_pass:
+            rec = "human_review" if iteration >= max_iterations else "retry"
+        if rec == "retry" and iteration >= max_iterations:
+            rec = "human_review"
+        note = f"SME (LLM) decision: {rec} -- {llm_reason}"
+        return rec, llm_reason, note
+
+    @staticmethod
+    def _deterministic_decision(can_pass: bool, iteration: int, max_iterations: int,
+                                reasons: list[str]) -> tuple[str, str]:
+        if can_pass:
+            return "pass", "all identity attributes above threshold, no conflicts, geometry valid"
+        if iteration >= max_iterations:
+            return "human_review", "max iterations reached with unresolved issues: " + "; ".join(reasons)
+        return "retry", ("; ".join(reasons) or "confidence below publish threshold")
+
+    @staticmethod
+    def _note_for(recommendation: str, reason: str, iteration: int) -> str:
+        if recommendation == "pass":
+            return "All identity attributes cleared the publish threshold with no unresolved conflicts."
+        if recommendation == "human_review":
+            return f"Escalated to human review after {iteration} iterations: {reason}."
+        return f"Requesting more evidence: {reason}."
+
     def review(self, mall: str, floor: int, feature: dict, all_features: list[dict],
                iteration: int, max_iterations: int) -> tuple[ReviewReport, list[Subtask]]:
         confidence_by_attribute: dict = feature["confidence_by_attribute"]
@@ -141,19 +201,20 @@ class PublicationReviewAgent(Agent):
         # coherent explanation rather than two disconnected fragments.
         explanation = list(feature.get("_explanation", []))
 
-        if min_confidence >= PASS_THRESHOLD and not conflicts and geometry_ok:
-            recommendation = "pass"
-            reason = "all identity attributes above threshold, no conflicts, geometry valid"
-            explanation.append("All identity attributes cleared the publish threshold with no unresolved conflicts.")
+        # can_pass is a hard, deterministic guardrail: identity above
+        # threshold, no unresolved conflicts, geometry rules satisfied. The
+        # LLM may reason about *how* to handle a feature that isn't clearly
+        # passable (retry now vs. escalate to a human, and why), but it is
+        # never allowed to publish something that fails this guardrail.
+        can_pass = min_confidence >= PASS_THRESHOLD and not conflicts and geometry_ok
+        recommendation, reason, llm_note = self._decide(
+            can_pass=can_pass, iteration=iteration, max_iterations=max_iterations,
+            reasons=reasons, feature=feature, min_confidence=min_confidence,
+            conflicts=conflicts, violations=violations,
+        )
+        if recommendation == "pass":
             follow_up_tasks = []
-        elif iteration >= max_iterations:
-            recommendation = "human_review"
-            reason = "max iterations reached with unresolved issues: " + "; ".join(reasons)
-            explanation.append(f"Escalated to human review after {iteration} iterations: {'; '.join(reasons)}.")
-        else:
-            recommendation = "retry"
-            reason = "; ".join(reasons) or "confidence below publish threshold"
-            explanation.append(f"Requesting more evidence: {reason}.")
+        explanation.append(llm_note)
 
         report = ReviewReport(
             feature_id=feature["feature_id"],

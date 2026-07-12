@@ -198,6 +198,7 @@ def extract_spatial_clues(segments: list[dict], store_name: str) -> list[dict]:
                 results.append({
                     "clue": {"floor": int(fm.group(1)), "timestamp": timestamp},
                     "certainty": certainty, "certainty_reason": certainty_reason,
+                    "excerpt": sentence,  # the exact spoken words this clue came from
                 })
                 break
 
@@ -214,10 +215,64 @@ def extract_spatial_clues(segments: list[dict], store_name: str) -> list[dict]:
                 results.append({
                     "clue": {"adjacent_to": raw.strip(), "timestamp": timestamp},
                     "certainty": certainty, "certainty_reason": certainty_reason,
+                    "excerpt": sentence,
                 })
                 break
 
     return results
+
+
+def locate_timestamp(segments: list[dict], excerpt: str) -> str | None:
+    """Best-effort caption timestamp for a sentence the LLM extracted from
+    the joined transcript text -- so an LLM-derived clue still carries the
+    real "watch at HH:MM:SS" provenance a regex-derived one does."""
+    if not segments or not excerpt:
+        return None
+    text, offsets = _build_offset_map(segments)
+    needle = excerpt.strip().lower()[:40]
+    idx = text.lower().find(needle)
+    if idx < 0:
+        return None
+    return _format_timestamp(_time_for_offset(offsets, idx))
+
+
+def gather_research(mall: str, store_name: str) -> dict:
+    """Real data-gathering half of the YouTube workflow, kept separate from
+    clue extraction so the Research Agent can run its own (LLM-based)
+    extraction over the *actual* transcript text. Returns
+    {"metadata_hits": [{"video", "clue", "certainty", "certainty_reason"}],
+     "transcripts": [{"video": {...}, "segments": [...], "text": str}]}.
+
+    `transcripts` carries the genuine caption segments (exact spoken words,
+    with start times) pulled from each real video via the public caption
+    track -- or the bundled SAMPLE_TRANSCRIPTS when no YOUTUBE_API_KEY is
+    configured, so the extraction path is still exercisable offline."""
+    videos = search_videos(mall, store_name)
+
+    if not videos:
+        key = store_name.strip().lower()
+        segments = SAMPLE_TRANSCRIPTS.get(key)
+        if segments is None:
+            return {"metadata_hits": [], "transcripts": []}
+        video_stub = {"video_id": "dev-sample", "video_url": "https://dev-fallback-transcript.invalid/video",
+                      "video_title": f"{mall} walkthrough (sample)", "published_at": None}
+        text, _ = _build_offset_map(segments)
+        return {"metadata_hits": [], "transcripts": [{"video": video_stub, "segments": segments, "text": text}]}
+
+    metadata_hits = []
+    transcripts = []
+    for video in videos:
+        floor_hint = _metadata_floor_hint(video)
+        if floor_hint is not None:
+            metadata_hits.append({
+                "video": video, "clue": {"floor": floor_hint},
+                "certainty": STATED_CERTAINTY, "certainty_reason": "metadata_hint",
+            })
+        segments = get_transcript_segments(video["video_id"])
+        if segments:
+            text, _ = _build_offset_map(segments)
+            transcripts.append({"video": video, "segments": segments, "text": text})
+    return {"metadata_hits": metadata_hits, "transcripts": transcripts}
 
 
 def _metadata_floor_hint(video: dict) -> int | None:
