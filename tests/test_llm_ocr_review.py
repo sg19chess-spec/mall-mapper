@@ -127,7 +127,7 @@ def _feature():
 def test_decide_deterministic_when_no_llm(monkeypatch):
     agent = PublicationReviewAgent(_FakeStore())
     monkeypatch.setattr(agent, "llm_available", lambda: False)
-    rec, reason, note = agent._decide(
+    rec, reason, note, used_llm = agent._decide(
         can_pass=True, iteration=1, max_iterations=4, reasons=[],
         feature=_feature(), min_confidence=0.9, conflicts=[], violations=[],
     )
@@ -139,7 +139,7 @@ def test_decide_llm_pass_is_clamped_when_not_eligible(monkeypatch):
     monkeypatch.setattr(agent, "llm_available", lambda: True)
     monkeypatch.setattr(agent, "try_llm_json", lambda *a, **k: {"recommendation": "pass", "reason": "looks fine"})
     # can_pass False, iterations remain -> LLM "pass" must be clamped to retry
-    rec, reason, note = agent._decide(
+    rec, reason, note, used_llm = agent._decide(
         can_pass=False, iteration=1, max_iterations=4, reasons=["low confidence on floor"],
         feature=_feature(), min_confidence=0.3, conflicts=[], violations=[],
     )
@@ -150,7 +150,7 @@ def test_decide_llm_pass_clamped_to_human_review_when_iterations_spent(monkeypat
     agent = PublicationReviewAgent(_FakeStore())
     monkeypatch.setattr(agent, "llm_available", lambda: True)
     monkeypatch.setattr(agent, "try_llm_json", lambda *a, **k: {"recommendation": "pass", "reason": "ship it"})
-    rec, reason, note = agent._decide(
+    rec, reason, note, used_llm = agent._decide(
         can_pass=False, iteration=4, max_iterations=4, reasons=["low confidence"],
         feature=_feature(), min_confidence=0.3, conflicts=[], violations=[],
     )
@@ -161,7 +161,7 @@ def test_decide_falls_back_to_deterministic_on_llm_error(monkeypatch):
     agent = PublicationReviewAgent(_FakeStore())
     monkeypatch.setattr(agent, "llm_available", lambda: True)
     monkeypatch.setattr(agent, "try_llm_json", lambda *a, **k: None)  # LLM failed/unparseable
-    rec, reason, note = agent._decide(
+    rec, reason, note, used_llm = agent._decide(
         can_pass=True, iteration=1, max_iterations=4, reasons=[],
         feature=_feature(), min_confidence=0.9, conflicts=[], violations=[],
     )
@@ -172,7 +172,7 @@ def test_decide_llm_retry_clamped_to_human_review_when_iterations_spent(monkeypa
     agent = PublicationReviewAgent(_FakeStore())
     monkeypatch.setattr(agent, "llm_available", lambda: True)
     monkeypatch.setattr(agent, "try_llm_json", lambda *a, **k: {"recommendation": "retry", "reason": "need more"})
-    rec, reason, note = agent._decide(
+    rec, reason, note, used_llm = agent._decide(
         can_pass=False, iteration=4, max_iterations=4, reasons=["x"],
         feature=_feature(), min_confidence=0.3, conflicts=[], violations=[],
     )

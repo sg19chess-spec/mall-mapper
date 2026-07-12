@@ -72,16 +72,23 @@ class PublicationReviewAgent(Agent):
         ]]}
 
     def _decide(self, *, can_pass: bool, iteration: int, max_iterations: int, reasons: list[str],
-                feature: dict, min_confidence: float, conflicts: list, violations: list[str]) -> tuple[str, str, str]:
-        """Returns (recommendation, reason, explanation_note). The LLM makes
-        the judgment call when a provider is configured; a deterministic
-        rule is the fallback. Either way the hard guardrails are enforced:
-        `pass` only when can_pass, and no `retry` once iterations are spent
-        (that becomes `human_review`)."""
+                feature: dict, min_confidence: float, conflicts: list, violations: list[str]) -> tuple[str, str, str, bool]:
+        """Returns (recommendation, reason, explanation_note, used_llm). The
+        LLM makes the judgment call when a provider is configured; a
+        deterministic rule is the fallback. Either way the hard guardrails
+        are enforced: `pass` only when can_pass, and no `retry` once
+        iterations are spent (that becomes `human_review`).
+
+        `used_llm` is reported explicitly (not inferred from the reason
+        text) and surfaced all the way to the audit trail / /diagnostics --
+        a missing API key degrades silently to the deterministic path by
+        design (so a run never crashes over it), which also means there was
+        previously no way to tell "the LLM ran" from "the key was never
+        set" without reading logs. This flag closes that gap."""
         det_recommendation, det_reason = self._deterministic_decision(can_pass, iteration, max_iterations, reasons)
 
         if not self.llm_available():
-            return det_recommendation, det_reason, self._note_for(det_recommendation, det_reason, iteration)
+            return det_recommendation, det_reason, self._note_for(det_recommendation, det_reason, iteration), False
 
         system = (
             "You are an SME reviewing one candidate indoor-map feature before publication. "
@@ -104,7 +111,9 @@ class PublicationReviewAgent(Agent):
         rec = parsed.get("recommendation") if isinstance(parsed, dict) else None
         llm_reason = (parsed.get("reason") or "").strip() if isinstance(parsed, dict) else ""
         if rec not in ("pass", "retry", "human_review") or not llm_reason:
-            return det_recommendation, det_reason, self._note_for(det_recommendation, det_reason, iteration)
+            # key was configured but the call/parse failed (network, rate
+            # limit, malformed response) -- still a fallback, report as such
+            return det_recommendation, det_reason, self._note_for(det_recommendation, det_reason, iteration), False
 
         # clamp the LLM's choice to the hard guardrails
         if rec == "pass" and not can_pass:
@@ -112,7 +121,7 @@ class PublicationReviewAgent(Agent):
         if rec == "retry" and iteration >= max_iterations:
             rec = "human_review"
         note = f"SME (LLM) decision: {rec} -- {llm_reason}"
-        return rec, llm_reason, note
+        return rec, llm_reason, note, True
 
     @staticmethod
     def _deterministic_decision(can_pass: bool, iteration: int, max_iterations: int,
@@ -132,7 +141,7 @@ class PublicationReviewAgent(Agent):
         return f"Requesting more evidence: {reason}."
 
     def review(self, mall: str, floor: int, feature: dict, all_features: list[dict],
-               iteration: int, max_iterations: int) -> tuple[ReviewReport, list[Subtask]]:
+               iteration: int, max_iterations: int) -> tuple[ReviewReport, list[Subtask], bool]:
         confidence_by_attribute: dict = feature["confidence_by_attribute"]
         conflicts = feature.get("_conflicts", [])
 
@@ -207,7 +216,7 @@ class PublicationReviewAgent(Agent):
         # passable (retry now vs. escalate to a human, and why), but it is
         # never allowed to publish something that fails this guardrail.
         can_pass = min_confidence >= PASS_THRESHOLD and not conflicts and geometry_ok
-        recommendation, reason, llm_note = self._decide(
+        recommendation, reason, llm_note, used_llm = self._decide(
             can_pass=can_pass, iteration=iteration, max_iterations=max_iterations,
             reasons=reasons, feature=feature, min_confidence=min_confidence,
             conflicts=conflicts, violations=violations,
@@ -254,4 +263,4 @@ class PublicationReviewAgent(Agent):
                     detail={"properties": feature["properties"]},
                 )
 
-        return report, follow_up_subtasks
+        return report, follow_up_subtasks, used_llm

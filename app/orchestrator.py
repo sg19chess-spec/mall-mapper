@@ -87,13 +87,17 @@ class Orchestrator:
                     max_delta = max(max_delta, abs(min_conf - prev))
                 prev_confidences[feature["feature_id"]] = min_conf
 
-                report, follow_ups = self.publication_review.review(
+                report, follow_ups, used_llm = self.publication_review.review(
                     config.mall, floor, feature, features, iteration, config.max_iterations
                 )
                 self.store.log_audit(job_id, iteration, "review_decision", feature_id=feature["feature_id"], detail={
                     "agent": AGENT_PUBLICATION_REVIEW,
                     "recommendation": report.recommendation, "reason": report.reason,
                     "confidence_by_attribute": report.confidence_by_attribute,
+                    # explicit, not inferred from wording -- see /diagnostics
+                    # and publication_review.py's _decide() for why this
+                    # can't be safely guessed from the reason text alone.
+                    "used_llm": used_llm,
                 })
                 next_queue.extend(follow_ups)
 

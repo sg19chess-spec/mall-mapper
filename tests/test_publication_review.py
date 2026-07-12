@@ -60,7 +60,7 @@ def test_explanation_combines_validation_and_publication_bullets_on_pass():
     agent = PublicationReviewAgent(store)
     feature = make_feature(explanation=["official_directory, web agree on floor."])
 
-    report, follow_ups = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
+    report, follow_ups, _used_llm = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
 
     assert report.recommendation == "pass"
     assert follow_ups == []
@@ -83,7 +83,7 @@ def test_explanation_and_reason_mention_conflict_type_on_retry():
         explanation=["Conflict on floor (floor): official_directory=2, social=5."],
     )
 
-    report, follow_ups = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
+    report, follow_ups, _used_llm = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
 
     assert report.recommendation == "retry"
     assert "floor" in report.reason
@@ -104,7 +104,7 @@ def test_explanation_marks_temporal_conflict_distinctly_on_escalation():
     )
     feature = make_feature(conflicts=[conflict])
 
-    report, _ = agent.review("Mall of America", 2, feature, [feature], iteration=4, max_iterations=4)
+    report, _, _used_llm = agent.review("Mall of America", 2, feature, [feature], iteration=4, max_iterations=4)
 
     assert report.recommendation == "human_review"
     assert "temporal" in report.reason
@@ -119,7 +119,7 @@ def test_low_confidence_field_below_pass_threshold_triggers_retry():
         "name": 0.9, "floor": 0.9, "category": PASS_THRESHOLD - 0.1, "unit": 0.9, "geometry": 0.5,
     })
 
-    report, follow_ups = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
+    report, follow_ups, _used_llm = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
 
     assert report.recommendation == "retry"
     assert "category" in report.reason
@@ -164,7 +164,7 @@ def test_overlapping_geometry_triggers_retry_with_verify_geometry_task():
     neighbor = other_store(polygon(30, 30, 90, 90))  # overlaps feature's polygon
     corridor = corridor_feature(line(0, 200, 60))  # touches feature's bottom edge, so only overlap should fail
 
-    report, follow_ups = agent.review(
+    report, follow_ups, _used_llm = agent.review(
         "Mall of America", 2, feature, [feature, neighbor, corridor], iteration=1, max_iterations=4,
     )
 
@@ -184,7 +184,7 @@ def test_geometry_not_touching_corridor_triggers_retry():
     )
     far_corridor = corridor_feature(line(0, 500, 9000))  # nowhere near the store
 
-    report, follow_ups = agent.review(
+    report, follow_ups, _used_llm = agent.review(
         "Mall of America", 2, feature, [feature, far_corridor], iteration=1, max_iterations=4,
     )
 
@@ -203,7 +203,7 @@ def test_valid_geometry_with_no_violations_allows_pass():
     corridor = corridor_feature(line(0, 500, 200))
     other = other_store(polygon(300, 140, 360, 200))  # elsewhere, no overlap
 
-    report, follow_ups = agent.review(
+    report, follow_ups, _used_llm = agent.review(
         "Mall of America", 2, feature, [feature, corridor, other], iteration=1, max_iterations=4,
     )
 
@@ -224,7 +224,7 @@ def test_geometry_confidence_below_minimum_triggers_retry_even_without_rule_viol
     )
     corridor = corridor_feature(line(0, 500, 200))
 
-    report, follow_ups = agent.review(
+    report, follow_ups, _used_llm = agent.review(
         "Mall of America", 2, feature, [feature, corridor], iteration=1, max_iterations=4,
     )
 
@@ -243,7 +243,7 @@ def test_missing_geometry_skips_geometry_checks_entirely():
     # attributes are otherwise strong enough to pass.
     feature = make_feature(geometry=None, confidence=dict(HIGH_IDENTITY_CONFIDENCE))
 
-    report, follow_ups = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
+    report, follow_ups, _used_llm = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
 
     assert report.recommendation == "pass"
     assert follow_ups == []
@@ -258,7 +258,7 @@ def test_geometry_none_but_confidence_present_still_blocks_pass():
     agent = PublicationReviewAgent(store)
     feature = make_feature(geometry=None, confidence={**HIGH_IDENTITY_CONFIDENCE, "geometry": 0.1})
 
-    report, follow_ups = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
+    report, follow_ups, _used_llm = agent.review("Mall of America", 2, feature, [feature], iteration=1, max_iterations=4)
 
     assert report.recommendation == "retry"
     assert any(fu.task_type.value == "verify_geometry" for fu in follow_ups)
@@ -272,7 +272,7 @@ def test_multiple_geometry_violations_all_named_in_reason():
     overlapping_neighbor = other_store(polygon(30, 30, 90, 90))
     far_corridor = corridor_feature(line(0, 500, 9000))
 
-    report, _ = agent.review(
+    report, _, _used_llm = agent.review(
         "Mall of America", 2, feature, [feature, overlapping_neighbor, far_corridor],
         iteration=1, max_iterations=4,
     )
@@ -288,7 +288,7 @@ def test_geometry_violation_escalates_to_human_review_after_max_iterations():
     feature = make_feature(geometry=geom, confidence={**HIGH_IDENTITY_CONFIDENCE, "geometry": 0.9})
     overlapping_neighbor = other_store(polygon(30, 30, 90, 90))
 
-    report, follow_ups = agent.review(
+    report, follow_ups, _used_llm = agent.review(
         "Mall of America", 2, feature, [feature, overlapping_neighbor], iteration=4, max_iterations=4,
     )
 
@@ -313,7 +313,7 @@ def test_floor_boundary_excludes_the_reviewed_feature_itself():
     corridor = corridor_feature(line(0, 500, 200))
     neighbor = other_store(polygon(50, 140, 110, 200))
 
-    report, follow_ups = agent.review(
+    report, follow_ups, _used_llm = agent.review(
         "Mall of America", 2, feature, [feature, corridor, neighbor], iteration=1, max_iterations=4,
     )
 
@@ -333,7 +333,7 @@ def test_floor_boundary_still_passes_a_store_within_the_rest_of_the_floor():
     corridor = corridor_feature(line(0, 500, 200))
     neighbor = other_store(polygon(300, 140, 360, 200))
 
-    report, _ = agent.review(
+    report, _, _used_llm = agent.review(
         "Mall of America", 2, feature, [feature, corridor, neighbor], iteration=1, max_iterations=4,
     )
 

@@ -83,6 +83,25 @@ def run_job(req: RunRequest):
     return {"job_id": job_id, "status": "running"}
 
 
+@router.get("/diagnostics")
+def get_diagnostics():
+    """Reports which optional capabilities are actually configured on this
+    deployment -- booleans only, never the key values themselves. Exists
+    because the LLM/YouTube call sites fail *silently* to a deterministic
+    fallback when a key is missing (by design, so a missing key doesn't
+    crash a run) -- which also means there was previously no way to tell
+    "LLM is running" from "LLM key was never set" without reading source
+    code. Check this instead of guessing from review-decision wording."""
+    return {
+        "llm_configured": bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")),
+        "anthropic_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "openai_configured": bool(os.environ.get("OPENAI_API_KEY")),
+        "youtube_configured": bool(os.environ.get("YOUTUBE_API_KEY")),
+        "supabase_configured": bool(os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_ROLE_KEY")),
+        "dev_mode": get_store().dev_mode,
+    }
+
+
 @router.get("/status/{job_id}")
 def get_status(job_id: str):
     store = get_store()
