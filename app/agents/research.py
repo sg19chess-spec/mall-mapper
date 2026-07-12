@@ -100,8 +100,19 @@ class ResearchAgent(Agent):
         # both static and Playwright-rendered fetches, so a second Playwright
         # round-trip here is guaranteed to fail too and would only add ~30s
         # of dead time for a result we already know.
+        # When this run's directory scrape succeeded live, try the live map
+        # capture (which itself falls back to cached anchors on failure).
+        # When it fell back to sample/persisted data, skip the wasteful live
+        # map round-trip but STILL use the cached anchor coordinates for MOA
+        # -- they're static and don't need a live fetch, so the map keeps its
+        # real backbone even on a run where the scrape was flaky.
         source_is_live = bool(stores) and stores[0].get("_source_is_live", False)
-        capture = anchor_map.fetch_anchor_positions(self.base_url, subtask.floor) if source_is_live else None
+        if source_is_live:
+            capture = anchor_map.fetch_anchor_positions(self.base_url, subtask.floor)
+        elif anchor_map.is_moa(self.base_url):
+            capture = anchor_map.cached_anchor_positions(subtask.floor)
+        else:
+            capture = None
         anchor_positions = None
         ocr_results: list[dict] = []
         ocr_positions: list[dict] = []

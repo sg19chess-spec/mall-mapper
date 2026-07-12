@@ -61,12 +61,14 @@ def test_full_mall_publishes_all_sample_stores_with_perfect_directory_agreement(
     # multi-source corroboration (directory + floor plan + web + YouTube
     # transcript) and the agreement bonus are both contributing
     assert acc["evidence_agreement_score"] > 0.5
-    # Offline (sample data, no reachable live map), there is no real geometry
-    # source, so stores publish on identity but none are placed -- no
-    # synthetic fallback. placement_rate reflects that; geometry_validity_rate
-    # is vacuously 1.0 (no invalid geometries among zero placed stores).
-    assert acc["placed_count"] == 0
-    assert acc["placement_rate"] == 0.0
+    # Even offline (no reachable live map), MOA's cached real anchor
+    # coordinates place any sample store whose name matches an anchor --
+    # here "Crayola Experience" (floor 3) matches the Crayola Experience
+    # landmark -- so at least one store gets a real position. Everything else
+    # publishes on identity but stays unplaced (no synthetic fallback), and
+    # every placed geometry is valid.
+    assert acc["placed_count"] >= 1
+    assert acc["placement_rate"] > 0.0
     assert acc["geometry_validity_rate"] == 1.0
     assert report["human_review_queue_size"] == 0
 

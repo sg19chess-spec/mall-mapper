@@ -79,6 +79,13 @@ CACHED_ANCHORS: dict[int, dict] = {
 }
 
 
+def is_moa(base_url: str) -> bool:
+    """The cached anchor coordinates are Mall of America's own map positions,
+    so they must only ever be applied to MOA -- never injected onto some
+    other mall whose base_url happens to be passed in."""
+    return "mallofamerica" in (base_url or "").lower()
+
+
 def cached_anchor_positions(floor: int) -> dict | None:
     """The last-known-real anchor set for a floor (see CACHED_ANCHORS),
     shaped like a live capture but with no screenshot. Returns None for a
@@ -115,11 +122,13 @@ def fetch_anchor_positions(base_url: str, floor: int, timeout_ms: int = 30000) -
     level_id = FLOOR_TO_LEVEL_ID.get(floor)
     if level_id is None:
         return None
+    # cached fallback only applies to MOA (the coordinates are its map's)
+    fallback = cached_anchor_positions(floor) if is_moa(base_url) else None
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
         print(f"[anchor_map] playwright not installed, using cached anchors: {exc}", file=sys.stderr)
-        return cached_anchor_positions(floor)
+        return fallback
 
     map_png = None
     svg_px = None
@@ -160,12 +169,12 @@ def fetch_anchor_positions(base_url: str, floor: int, timeout_ms: int = 30000) -
         # renders its real backbone instead of coming back empty.
         print(f"[anchor_map] live capture failed for floor {floor} ({type(exc).__name__}: {exc}); "
               f"using cached anchors", file=sys.stderr)
-        return cached_anchor_positions(floor)
+        return fallback
 
     parsed = parse_map_svg(svg_html, level_id) if svg_html else None
     if parsed is None or not parsed.get("anchors"):
         print(f"[anchor_map] live map parsed no anchors for floor {floor}; using cached anchors", file=sys.stderr)
-        return cached_anchor_positions(floor)
+        return fallback
     parsed["map_png"] = map_png
     parsed["svg_px"] = svg_px
     parsed["live"] = True
